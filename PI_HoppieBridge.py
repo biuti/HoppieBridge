@@ -5,14 +5,14 @@ X-Plane plugin
 this script creates drefs needed to comunicate with Hoppie's ACARS system,
 so to make it simpler for developers to create their own ACARS interface.
 Drefs:
-- hoppiebridge/send_queue: array of array, to send messages to Hoppie's ACARS
-- hoppiebridge/poll_queue: array of strings, to poll messages from Hoppie's ACARS
-- hoppiebridge/callsign: string, to set your callsign
+- hoppiebridge/send_queue: data, to send messages to Hoppie's ACARS
+- hoppiebridge/poll_queue: data, to poll messages from Hoppie's ACARS
+- hoppiebridge/callsign: data, to set your callsign
 
 received messages will be in poll_queue, and sent messages should be added to send_queue.
 
 Message format:
-The messages should be in JSON format, with the following structure:
+The messages for Hoppie's ACARS should be in JSON format, with the following structure:
 {
     "logon": string, # your logon string
     "from": string, # your callsign
@@ -22,6 +22,14 @@ The messages should be in JSON format, with the following structure:
 }
 
 further information can be found at https://www.hoppie.nl/acars/system/tech.html
+
+As Dref do not permit Array of data, inbox and outbox dref will be json like string that will be encoded and decoded
+before sending to the communication bridge.
+
+Strings sent to outbox dref will be like:
+{"to": "SERVER", "type": "inforeq", "packet": "METAR LIPE"}
+Received messages, alike, will be json like string:
+{'response': 'ok {acars info {LIPE 031350Z 05009KT 010V090 9999 BKN055 28/13 Q1014}}'}
 
 Copyright (c) 2025, Antonio Golfari
 All rights reserved.
