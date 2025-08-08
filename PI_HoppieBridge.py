@@ -342,6 +342,45 @@ class EasyCommand:
         XPLMUnregisterCommandHandler(self.command, self.commandCH, 1, 0)
 
 
+def text2data(text) -> list:
+    xp.log(f' ** text2data: {text} | type: {type(text)}')
+    if not isinstance(text, (dict, str)):
+        xp.log(f' ** text2data: exiting empty ...')
+        return []
+    elif isinstance(text, dict):
+        text = json.dumps(text)
+    val = bytearray()
+    try:
+        val.extend(map(ord, text))
+        xp.log(f' ** text2data: {val}')
+    except (TypeError, ValueError) as e:
+        xp.log(f"text2data ERROR: {e}")
+    return list(val)
+
+
+def data2text(data) -> str:
+    xp.log(f' ** data2text: {data} | type: {type(data)}')
+    try:
+        text = bytearray([e for e in data if e]).decode('utf-8')
+        xp.log(f' ** data2text: {text}')
+        return text
+    except (TypeError, ValueError) as e:
+        xp.log(f"data2text ERROR: {e}")
+    return ''
+
+
+def data2dict(data: list) -> dict:
+    xp.log(f' ** data2dict: {data} | type: {type(data)}')
+    if len(data) and isinstance(data, list):
+        try:
+            text = bytearray([e for e in data if e]).decode('utf-8')
+            parsed = json.loads(text)
+            xp.log(f' ** data2dict: {parsed}')
+            return parsed
+        except (TypeError, ValueError) as e:
+            xp.log(f"data2dict ERROR: {e}")
+    return {}
+
 
 class Dref:
 
@@ -349,31 +388,36 @@ class Dref:
         self._on_ground = find_dataref('sim/flightmodel2/gear/on_ground')
         self._avionics = find_dataref('sim/cockpit/electrical/avionics_on')
         # there's an issue with create_dataref and string type in version 4.5.0
-        # self._send_queue = create_dataref('hoppiebridge/send_queue', 'string')
-        # self._poll_queue = create_dataref('hoppiebridge/poll_queue', 'string')
-        # self._callsign = create_dataref('hoppiebridge/callsign', 'string')
-        xp.registerDataAccessor('hoppiebridge/send_queue', writable=1, dataType=32)
-        xp.registerDataAccessor('hoppiebridge/poll_queue', writable=1, dataType=32)
-        xp.registerDataAccessor('hoppiebridge/callsign', writable=1, dataType=32)
-        self._send_queue = find_dataref('hoppiebridge/send_queue')
-        self._poll_queue = find_dataref('hoppiebridge/poll_queue')
-        self._callsign = find_dataref('hoppiebridge/callsign')
-        # xp.log(f"Datarefs initialized: {xp.getDataRefInfo(self._send_queue)}")
+        self._send_queue = EasyDref('hoppiebridge/send_queue[255]', 'data', register=True, writable=True)
+        self._poll_queue = EasyDref('hoppiebridge/poll_queue[255]', 'data', register=True, writable=True)
+        self._callsign = EasyDref('hoppiebridge/callsign[15]', 'data', register=True, writable=True)
 
     @property
     def callsign(self) -> str:
         """Get the callsign"""
-        return self._get(self._callsign) or 'TEST'
+        xp.log(f'  * callsign: {self._callsign.value}')
+        xp.log(f"  * callsign to str: {bytearray([int(x) for x in self._callsign.value if x]).decode('utf-8')}")
+        val = bytearray([int(x) for x in self._callsign.value if x]).decode('utf-8')
+        if not val:
+            try:
+                val = bytearray()
+                val.extend(map(ord, 'TEST'))
+                self._callsign.value = list(val)
+            except (ValueError, TypeError) as e:
+                xp.log(f'Dref.callsign ERROR: {e}')
+        return val
 
     @property
-    def inbox(self) -> str:
+    def inbox(self) -> dict:
         """Handle incoming messages from Hoppie's ACARS"""
-        return self._get(self._poll_queue) or ''
+        xp.log(f'  * inbox: {self._poll_queue.value}')
+        return data2dict(self._poll_queue.value)
 
     @property
-    def outbox(self) -> str:
+    def outbox(self) -> dict:
         """Get the outbox messages"""
-        return self._get(self._send_queue) or ''
+        xp.log(f'  * outbox: {self._send_queue.value}')
+        return data2dict(self._send_queue.value)
 
     @property
     def avionics_on(self) -> bool:
@@ -386,62 +430,58 @@ class Dref:
             # return dref.value
             val = XPLMGetDatab(dref)
             return bytearray(val).decode('utf-8').strip('\x00')
-        except ValueError as e:
+        except (TypeError, ValueError) as e:
             xp.log(f"ERROR: {e}")
             return ''
         except SystemError as e:
-            xp.log(f"ERROR: {e}")
+            xp.log(f"SYSTEM ERROR: {e}")
             return ''
 
     def _set(self, dref, value: str) -> bool:
         try:
-            # dref.value = value
-            # xp.setDatas(dref, value)
             XPLMSetDatab(dref, value.encode('utf-8'), 0, len(value))
-        except SystemError as e:
+        except (TypeError, ValueError) as e:
             xp.log(f"ERROR: {e}")
-            return False
+            return ''
+        except SystemError as e:
+            xp.log(f"SYSTEM ERROR: {e}")
+            return ''
 
-    def add_to_outbox(self, message: str) -> bool:
+    def add_to_outbox(self, message: dict) -> bool:
         """Add a message to the send queue"""
-        if isinstance(message, str) and self.outbox == '':
-            self._set(self._send_queue, message)
+        if message:
+            xp.log(f' ** message to outbox: {message} | type: {type(message)}')
+            data = text2data(message)
+            self._send_queue.value = data
             return True
         return False
 
-    def add_to_inbox(self, message: str) -> bool:
+    def add_to_inbox(self, message: dict) -> bool:
         """Add a message to the receive queue"""
-        if isinstance(message, str) and self.inbox == '':
-            self._set(self._poll_queue, message)
+        xp.log(f' ** message to inbox: {message} | type: {type(message)}')
+        if message:
+            val = text2data(message)
+            self._poll_queue.value = val
             return True
         return False
 
     def clear_received(self) -> bool:
         """Clear received messages from Hoppie's ACARS"""
-        self._set(self._poll_queue, '')
-        return True
+        try:
+            self._poll_queue.value = list(bytearray())
+            return True
+        except (TypeError, ValueError) as e:
+            xp.log(f"clear_received ERROR: {e}")
+        return False
 
     def clear_send(self) -> bool:
         """Clear sent messages to Hoppie's ACARS"""
-        self._set(self._send_queue, '')
+        try:
+            self._send_queue.value = list(bytearray())
+            return True
+        except (TypeError, ValueError) as e:
+            xp.log(f"clear_send ERROR: {e}")
         return True
-
-
-    # def adjust(self) -> bool:
-    #     self._set(self._rain_force_factor_dref, ZIBO_RAIN_FORCE_FACTOR)
-    #     self._set(self._friction_dynamic_dref, ZIBO_FRICTION_DYNAMIC)
-    #     self._set(self._history_rate_dref, ZIBO_HISTORY_RATE)
-    #     self._set(self._rain_max_force_dref, ZIBO_RAIN_MAX_FORCE)
-    #     self._set(self._rain_scale_dref, ZIBO_RAIN_SCALE)
-    #     self._set(self._rain_spawn_dref, ZIBO_RAIN_SPAWN)
-
-    # def reset(self) -> bool:
-    #     self._set(self._rain_force_factor_dref, DEFAULT_RAIN_FORCE_FACTOR)
-    #     self._set(self._friction_dynamic_dref, DEFAULT_FRICTION_DYNAMIC)
-    #     self._set(self._history_rate_dref, DEFAULT_HISTORY_RATE)
-    #     self._set(self._rain_max_force_dref, DEFAULT_RAIN_MAX_FORCE)
-    #     self._set(self._rain_scale_dref, DEFAULT_RAIN_SCALE)
-    #     self._set(self._rain_spawn_dref, DEFAULT_RAIN_SPAWN)
 
 
 class Async(threading.Thread):
@@ -804,7 +844,7 @@ class PythonInterface:
         self.plugin_desc = plugin_desc
 
         # Dref init
-        self.dref = None  # Dref instance
+        self.dref = Dref()  # Dref instance
 
         # app init
         self.logon = ''  # logon string
@@ -818,9 +858,9 @@ class PythonInterface:
         self.load_settings()
 
         # widget and windows
-        self.monitor = None
         self.details_message = "testing ..."  # text displayed in widget info_line
         self.message_content = []  # content of the messages widget
+        self.create_monitor_window(100, 400)
 
         # create main menu and widget
         self.main_menu = self.create_main_menu()
@@ -833,7 +873,7 @@ class PythonInterface:
         """Get the callsign from the dref"""
         if self.dref:
             return self.dref.callsign
-        return 'TEST'
+        return ''
 
     @property
     def poll_data(self) -> dict:
@@ -924,21 +964,23 @@ class PythonInterface:
             if inParam1 == self.monitor.reqinfo_button:
                 # TEST - handle ReqInfo button
                 # send a request for LIPE METAR
-                self.outbox = """{
+                xp.log('**** Requesting LIPE METAR ...')
+                self.dref.add_to_outbox({
                     "to": "SERVER",
                     "type": "inforeq",
                     "packet": "METAR LIPE"
-                }"""
+                })
                 self.details_message = "Requesting LIPE METAR ..."
                 return 1
             if inParam1 == self.monitor.telex_button:
                 # TEST - handle Telex button
                 # send a telex for LIPE ATIS
-                self.outbox = """{
+                xp.log('**** Sending LIPE ATIS Telex ...')
+                self.dref.add_to_outbox({
                     "to": "SERVER",
                     "type": "telex",
                     "packet": "HC002 LIPE"
-                }"""
+                })
                 self.details_message = "Sending LIPE ATIS Telex ..."
                 return 1
         return 0
@@ -1020,6 +1062,7 @@ class PythonInterface:
                                 self.details_message = "Message received"
                             else:
                                 xp.log(f"Failed to add message to inbox: not empty")
+                                xp.log(f"inbox: {self.dref.inbox}")
                                 self.details_message = "Message received but inbox not empty"
                     self.async_task = False
                 else:
@@ -1030,13 +1073,14 @@ class PythonInterface:
                 if self.dref.outbox:
                     try:
                         # it's time to poll messages or we have messages to send
-                        parsed = json.loads(self.dref.outbox)
+                        parsed = self.dref.outbox
                         if isinstance(parsed, dict):
                             # dref is a json-like string, convert to json
                             # dref: '{"to": "value", "type": "value", "packet": "value"}'
                             parsed['logon'] = self.logon
                             parsed['from'] = self.callsign
                             message = parsed
+                            self.dref.clear_send()
                     except Exception as e:
                         xp.log(f"Invalid message format: {parsed} | Error: {e}")
 
