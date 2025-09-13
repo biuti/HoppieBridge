@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import ast
 import json
+import operator
 
 from pathlib import Path
 from enum import Enum
@@ -28,7 +29,7 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v0.1-beta.1'
+__VERSION__ = 'v0.3-beta.1'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieClient'
@@ -50,6 +51,17 @@ try:
 except NameError:
     FONT_WIDTH, FONT_HEIGHT = 10, 10
     PREF_PATH = Path(os.path.dirname(__file__)).parent
+
+
+# safe attrgetter with default value
+def safe_attrgetter(path, default=None):
+    def getter(obj):
+        try:
+            return operator.attrgetter(path)(obj)
+        except Exception as e:
+            xp.log(f"**** {path} Error: {e}")
+            return default
+    return getter
 
 
 def parse_message(raw: str) -> dict:
@@ -109,37 +121,33 @@ class Dref:
         """Get the callsign"""
         return self._callsign.value
 
+    @callsign.setter
+    def callsign(self, value: str):
+        """Set the callsign"""
+        if isinstance(value, str):
+            self._callsign.value = value
+
     @property
     def inbox(self) -> dict:
-        """Handle incoming messages from Hoppie's ACARS"""
+        """Return decoded inbox messages"""
         return parse_message(self._poll_queue.value)
+
+    @inbox.setter
+    def inbox(self, message: dict | str) -> None:
+        """Set inbox with a message (encoded before storing)"""
+        xp.log(f'  ** add_to_inbox: {message} | type: {type(message)}')
+        self._poll_queue.value = format_message(message)
 
     @property
     def outbox(self) -> dict:
-        """Get the outbox messages"""
+        """Return decoded outbox messages"""
         return parse_message(self._send_queue.value)
 
-    def add_to_callsign(self, message: str):
-        """Add a message to the send queue"""
-        if isinstance(message, str):
-            self._callsign.value = message
-
-    def add_to_inbox(self, message: str | dict):
-        """Add a message to the receive queue"""
-        self._poll_queue.value = format_message(message)
-
-    def add_to_outbox(self, message: str | dict):
-        """Add a message to the send queue"""
+    @outbox.setter
+    def outbox(self, message: dict | str) -> None:
+        """Set outbox with a message (encoded before storing)"""
         xp.log(f'  ** add_to_outbox: {message} | type: {type(message)}')
         self._send_queue.value = format_message(message)
-
-    def clear_inbox(self):
-        """Clear received messages from Hoppie's ACARS"""
-        xp.setDatas(self._poll_queue._dref, '', count=self._poll_queue._dim)
-
-    def clear_outbox(self):
-        """Clear sent messages to Hoppie's ACARS"""
-        xp.setDatas(self._send_queue._dref, '', count=self._send_queue._dim)
 
 
 class FloatingWidget:
@@ -467,6 +475,21 @@ class PythonInterface:
         # create main menu and widget
         self.main_menu = self.create_main_menu()
 
+    callsign = property(
+        safe_attrgetter("dref.callsign", default=''),
+        lambda self, value: setattr(self.dref, "callsign", value)
+    )
+
+    outbox = property(
+        safe_attrgetter("dref.outbox", default={}),
+        lambda self, value: setattr(self.dref, "outbox", value)
+    )
+
+    inbox = property(
+        safe_attrgetter("dref.inbox", default={}),
+        lambda self, value: setattr(self.dref, "inbox", value)
+    )
+
     @property
     def avionics_powered(self) -> bool:
         """Check if avionics are on"""
@@ -475,54 +498,6 @@ class PythonInterface:
         except Exception as e:
             xp.log(f'avionics_powered Error: {e}')
         return False
-
-    @property
-    def callsign(self) -> dict:
-        """read callsign dref"""
-        try:
-            return self.dref.callsign
-        except Exception as e:
-            xp.log(f'callsign Error: {e}')
-        return {}
-
-    @callsign.setter
-    def callsign(self, value: dict) -> None:
-        try:
-            self.dref.add_to_callsign(value)
-        except Exception as e:
-            xp.log(f'callsign setter Error: {e}')
-
-    @property
-    def inbox(self) -> dict:
-        """read inbox dref"""
-        try:
-            return self.dref.inbox
-        except Exception as e:
-            xp.log(f'**** inbox Error: {e}')
-        return {}
-
-    @inbox.setter
-    def inbox(self, value: dict) -> None:
-        try:
-            self.dref.add_to_inbox(value)
-        except Exception as e:
-            xp.log(f'**** inbox setter Error: {e}')
-
-    @property
-    def outbox(self) -> dict:
-        """read outbox dref"""
-        try:
-            return self.dref.outbox
-        except Exception as e:
-            xp.log(f'**** outbox Error: {e}')
-            return {}
-
-    @outbox.setter
-    def outbox(self, value: dict) -> None:
-        try:
-            self.dref.add_to_outbox(value)
-        except Exception as e:
-            xp.log(f'**** outbox setter Error: {e}')
 
     @property
     def dref(self) -> Dref:

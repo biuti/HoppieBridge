@@ -3,6 +3,15 @@ python script for XPPython3 in X-Plane 12, to create drefs for Hoppie's ACARS co
 
 The idea is to create a bridge for all the developers that would like to use the ACARS service without creating the server communication interface.
 
+## Requirements
+- MacOS 10.14, Windows 7 and Linux kernel 4.0 and above
+- X-Plane 12.3.0 and above (not tested with previous versions, may work)
+- pbuckner's [XPPython3 plugin](https://xppython3.readthedocs.io/en/latest/index.html)
+
+> [!IMPORTANT]
+> **This script needs XPPython version 4.6.0 or newer**
+
+
 This script creates drefs needed to communicate with Hoppie's ACARS system:
 - hoppiebridge/send_queue: data, to send messages to Hoppie's ACARS
 - hoppiebridge/poll_queue: data, to poll messages from Hoppie's ACARS
