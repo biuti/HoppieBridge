@@ -45,6 +45,7 @@ import ast
 import threading
 import requests
 import operator
+import random
 
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -59,7 +60,7 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v0.3-beta.1'
+__VERSION__ = 'v0.3-beta.2'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieBridge'
@@ -94,6 +95,11 @@ def safe_attrgetter(path, default=None):
             xp.log(f"**** {path} Error: {e}")
             return default
     return getter
+
+
+def random_connection_time(min: int = 45, max: int = 75) -> int:
+    """Calculate a random connection time between 45 and 75 seconds."""
+    return random.randint(min, max)
 
 
 def parse_message(raw: str) -> dict:
@@ -524,6 +530,11 @@ class PythonInterface:
         # create main menu and widget
         self.main_menu = self.create_main_menu()
 
+        # status
+        self.first_message_sent = False
+        self.waiting_response = False
+        self.next_poll_time = 0
+
     inbox = property(
         safe_attrgetter("dref.inbox", default={}),
         lambda self, value: setattr(self.dref, "inbox", value)
@@ -569,8 +580,16 @@ class PythonInterface:
     @property
     def time_to_poll(self) -> bool:
         """Check if it's time to poll messages"""
-        now = perf_counter()
-        return now - self.last_poll_time >= POLL_SCHEDULE
+        if not self.first_message_sent:
+            return False
+        return perf_counter() >= self.next_poll_time
+
+    def calculate_next_poll_time(self) -> None:
+        """Calculate the next poll time."""
+        if self.waiting_response:
+            self.next_poll_time = perf_counter() + random_connection_time(18, 24)
+        else:
+            self.next_poll_time = perf_counter() + random_connection_time(45, 75)
 
     def dref_init(self) -> None:
         try:
@@ -704,7 +723,6 @@ class PythonInterface:
         """Loop Callback"""
         t = datetime.now()
         start = perf_counter()
-        loop_schedule = DEFAULT_SCHEDULE
 
         if not self.dref:
             xp.log("**** Dref not set, aborting ...")
@@ -729,6 +747,8 @@ class PythonInterface:
             xp.log(f"   * outbox: {self.outbox}")
             xp.log(f"   * time to poll: {self.time_to_poll}")
 
+            self.status_text = "ACARS ready"
+
             # check if we have pending messages
             if len(self.pending_inbox) and not self.inbox:
                 self.inbox = self.pending_inbox.pop()
@@ -752,6 +772,7 @@ class PythonInterface:
                         else:
                             # process received message
                             xp.log(f"Received message: {result}")
+                            self.waiting_response = False
                             if not self.inbox:
                                 self.inbox = result
                                 xp.log("Message added to inbox")
@@ -771,6 +792,7 @@ class PythonInterface:
                 message = {}
                 poll_payload = {}
                 if self.outbox:
+                    # we have a message to send
                     try:
                         message = self.outbox
                         if isinstance(message, dict):
@@ -778,6 +800,9 @@ class PythonInterface:
                             message['logon'] = self.logon
                             message['from'] = self.callsign
                             self.outbox = ''
+                            if not self.first_message_sent:
+                                self.first_message_sent = True
+                            self.waiting_response = True
                     except Exception as e:
                         xp.log(f" *** Invalid message format, Error: {e}")
                 elif self.time_to_poll:
@@ -796,9 +821,10 @@ class PythonInterface:
                         poll_payload=poll_payload,
                     )
                     self.async_task.start()
+                    self.calculate_next_poll_time()
 
-        xp.log(f" {t.strftime('%H:%M:%S')} - loopCallback() ended after {round(perf_counter() - start, 3)} sec | schedule = {loop_schedule} sec")
-        return loop_schedule
+        xp.log(f" {t.strftime('%H:%M:%S')} - loopCallback() ended after {round(perf_counter() - start, 3)} sec")
+        return DEFAULT_SCHEDULE
 
     def XPluginStart(self):
         return self.plugin_name, self.plugin_sig, self.plugin_desc
