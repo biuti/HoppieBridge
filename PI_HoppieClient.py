@@ -132,23 +132,29 @@ class Dref:
 
     def __init__(self) -> None:
         # standard datarefs
-        self._send_queue = find_dataref('hoppiebridge/send_queue', 'string')  # legacy raw queue
-        self._send_message_to = find_dataref('hoppiebridge/send_message_to', 'string')
-        self._send_message_type = find_dataref('hoppiebridge/send_message_type', 'string')
-        self._send_message_packet = find_dataref('hoppiebridge/send_message_packet', 'string')
-        self._poll_queue = find_dataref('hoppiebridge/poll_queue', 'string')  # legacy raw queue
-        self._poll_message_origin = find_dataref('hoppiebridge/poll_message_origin', 'string')
-        self._poll_message_from = find_dataref('hoppiebridge/poll_message_from', 'string')
-        self._poll_message_type = find_dataref('hoppiebridge/poll_message_type', 'string')
-        self._poll_message_packet = find_dataref('hoppiebridge/poll_message_packet', 'string')
-        self._callsign = find_dataref('hoppiebridge/callsign', 'string')
-        self._poll_queue_clear = find_dataref('hoppiebridge/poll_queue_clear', 'number')
+        self._send_queue = find_dataref('hoppiebridge/send_queue')  # legacy raw queue
+        self._send_message_to = find_dataref('hoppiebridge/send_message_to')
+        self._send_message_type = find_dataref('hoppiebridge/send_message_type')
+        self._send_message_packet = find_dataref('hoppiebridge/send_message_packet')
+        self._poll_queue = find_dataref('hoppiebridge/poll_queue')  # legacy raw queue
+        self._poll_message_origin = find_dataref('hoppiebridge/poll_message_origin')
+        self._poll_message_from = find_dataref('hoppiebridge/poll_message_from')
+        self._poll_message_type = find_dataref('hoppiebridge/poll_message_type')
+        self._poll_message_packet = find_dataref('hoppiebridge/poll_message_packet')
+        self._callsign = find_dataref('hoppiebridge/callsign')
+        self._poll_queue_clear = find_dataref('hoppiebridge/poll_queue_clear')
+        self._comm_ready = find_dataref('hoppiebridge/comm_ready')
         self._avionics = find_dataref('sim/cockpit/electrical/avionics_on')
+
+    @property
+    def comm_ready(self) -> bool:
+        """Check if communication is ready"""
+        return bool(self._comm_ready.value)
 
     @property
     def avionics_powered(self) -> bool:
         """Check if avionics are on"""
-        return self._avionics.value == 1
+        return bool(self._avionics.value)
 
     @property
     def callsign(self) -> str:
@@ -594,6 +600,15 @@ class PythonInterface:
         return False
 
     @property
+    def comm_ready(self) -> bool:
+        """Check if avionics are on"""
+        try:
+            return self.dref.comm_ready
+        except Exception as e:
+            xp.log(f'comm_ready Error: {e}')
+        return False
+
+    @property
     def dref(self) -> Dref:
         if not hasattr(self, "_dref"):
             self._dref = Dref()
@@ -689,6 +704,10 @@ class PythonInterface:
             xp.log(f'  ** send_flight_ID Error: {e}')
 
     def send_message(self) -> None:
+        if not self.monitor:
+            # sanity check, should not happen
+            return
+
         station = xp.getWidgetDescriptor(self.monitor.station_input).strip().upper()
         text = xp.getWidgetDescriptor(self.monitor.text_input).strip().upper()
         message = {
@@ -703,6 +722,11 @@ class PythonInterface:
             self.pending_outbox.append(message)
 
     def format_message(self, data: dict) -> list:
+        """Format message content for display in widget"""
+        if not self.monitor:
+            # sanity check, should not happen
+            return []
+
         # create lines from D-ATIS string
         width = self.monitor.content_width
         print(f"****** format_message | width: {width} | char: {FONT_WIDTH}")
@@ -737,13 +761,16 @@ class PythonInterface:
             xp.log(f" *** waiting for callsign ...")
             self.status_text = "waiting for callsign"
 
+        elif not self.comm_ready:
+            self.status_text = "connecting ..."
+
         else:
             self.status_text = "ACARS active ..."
 
             # check if there are pending messages to send
             if len(self.pending_outbox) and not self.outbox:
                 message = self.pending_outbox.pop()
-                self.oubox = message
+                self.outbox = message
                 self.status_text = "sending queued message ..."
             # check if there are incoming messages
             if self.inbox:

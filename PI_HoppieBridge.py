@@ -14,6 +14,10 @@ This X-Plane plugin exposes eleven string datarefs used to integrate with Hoppie
     hoppiebridge/poll_message_packet — read the packet content of the latest message received.
     hoppiebridge/callsign — read the current callsign.
     hoppiebridge/poll_queue_clear — write 1 (or any non-zero value) to clear the inbox datarefs when message is received from client.
+    hoppiebridge/comm_ready — write 1 (or any non-zero value) to notify unit has all conditions to work:
+                                - avionics on
+                                - callsign set
+                                - poll success.
 
 Messages are dictionaries serialized to JSON with fields:
 {
@@ -223,6 +227,7 @@ class Dref:
         self._poll_message_packet = create_dataref('hoppiebridge/poll_message_packet', 'string')
         self._callsign = create_dataref('hoppiebridge/callsign', 'string')
         self._poll_queue_clear = create_dataref('hoppiebridge/poll_queue_clear', 'number')
+        self._comm_ready = create_dataref('hoppiebridge/comm_ready', 'number')
         # standard datarefs
         self._avionics = find_dataref('sim/cockpit/electrical/avionics_on')
 
@@ -311,7 +316,17 @@ class Dref:
     @clear_inbox.setter
     def clear_inbox(self, value: bool | int) -> None:
         """Set clear inbox request status"""
-        self._poll_queue_clear.value = int(value)
+        self._poll_queue_clear.value = int(bool(value))
+
+    @property
+    def comm_ready(self) -> bool:
+        """Return communication ready status"""
+        return bool(self._comm_ready.value)
+
+    @comm_ready.setter
+    def comm_ready(self, value: bool | int) -> None:
+        """Set communication ready status"""
+        self._comm_ready.value = int(bool(value))
 
 
 class Async(threading.Thread):
@@ -530,7 +545,7 @@ class FloatingWidget:
             l, t, l + 145, b,
             1, "", 0, self.widget, xp.WidgetClass_TextField
         )
-        xp.setWidgetProperty(self.logon_input, xp.Property_MaxCharacters, 16)
+        xp.setWidgetProperty(self.logon_input, xp.Property_MaxCharacters, 24)
         self.logon_caption = xp.createWidget(
             l, t, l + 145, b,
             1, "", 0, self.widget, xp.WidgetClass_Caption
@@ -671,7 +686,6 @@ class PythonInterface:
         self.main_menu = self.create_main_menu()
 
         # status
-        self.first_message_sent = False
         self.waiting_response = False
         self.next_poll_time = 0
 
@@ -688,6 +702,11 @@ class PythonInterface:
     clear_inbox = property(
         safe_attrgetter("dref.clear_inbox", default={}),
         lambda self, value: setattr(self.dref, "clear_inbox", value)
+    )
+
+    comm_ready = property(
+        safe_attrgetter("dref.comm_ready", default={}),
+        lambda self, value: setattr(self.dref, "comm_ready", value)
     )
 
     @property
@@ -725,8 +744,6 @@ class PythonInterface:
     @property
     def time_to_poll(self) -> bool:
         """Check if it's time to poll messages"""
-        if not self.first_message_sent:
-            return False
         return perf_counter() >= self.next_poll_time
 
     def calculate_next_poll_time(self) -> None:
@@ -742,6 +759,8 @@ class PythonInterface:
             # reset dref values
             self.inbox = {}
             self.outbox = {}
+            self.clear_inbox = False
+            self.comm_ready = False
         except Exception as e:
             xp.log(f'**** dref_init Error: {e}')
         # check datarefs creation and availability
@@ -881,6 +900,15 @@ class PythonInterface:
             self.status_text = "Connection task failed"
             return
 
+        if not isinstance(result, dict):
+            xp.log(" **** ACARS Invalid response")
+            self.status_text = "ACARS Invalid response"
+            return
+
+        if not ('poll' in result or 'response' in result):
+            xp.log(" **** ACARS Invalid response")
+            self.status_text = "ACARS Invalid response"
+            return
 
         # process result
         if 'error' in result:
@@ -890,7 +918,11 @@ class PythonInterface:
 
         # process received message
         self.waiting_response = False
-        if not self.inbox:
+        if not self.comm_ready and result.get('poll', '').strip().lower() == 'ok':
+            # first successful poll {'poll': 'ok '}
+            self.comm_ready = True
+            self.status_text = "ACARS ready"
+        elif not self.inbox:
             self.inbox = result
             self.status_text = "New Message received ..."
             self.message_content = self.format_message(result)
@@ -903,7 +935,7 @@ class PythonInterface:
         """Check if we need to poll or send messages"""
         message = None
         poll_payload = None
-        if self.outbox:
+        if self.comm_ready and self.outbox:
             # we have a message to send
             try:
                 message = self.outbox
@@ -912,13 +944,12 @@ class PythonInterface:
                     message['logon'] = self.logon
                     message['from'] = self.callsign
                     self.outbox = None
-                    if not self.first_message_sent:
-                        self.first_message_sent = True
                     self.waiting_response = True
             except Exception as e:
                 xp.log(f" *** Invalid message format, Error: {e}")
-        elif self.time_to_poll:
-            # it's time to poll messages
+
+        elif not self.comm_ready or self.time_to_poll:
+            # it's time to poll messages or to establish initial communication
             poll_payload = self.poll_payload
             self.last_poll_time = perf_counter()
         else:
@@ -942,18 +973,22 @@ class PythonInterface:
         if not self.dref:
             xp.log("**** Dref not set, aborting ...")
             self.status_text = "System Error"
+            self.comm_ready = False
 
         elif not self.avionics_powered:
             xp.log("**** Avionics off, aborting ...")
             self.status_text = "System off"
+            self.comm_ready = False
 
         elif not self.logon:
             xp.log(" *** No Logon, aborting ...")
             self.status_text = "Set Hoppie Logon"
+            self.comm_ready = False
 
         elif not self.callsign:
             xp.log(" *** waiting for callsign ...")
             self.status_text = "waiting for callsign"
+            self.comm_ready = False
 
         else:
             self.status_text = "ACARS ready"
