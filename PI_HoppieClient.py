@@ -64,19 +64,45 @@ def safe_attrgetter(path, default=None):
     return getter
 
 
-def parse_message(raw: str) -> dict:
-    """Convert raw string into dict using JSON first, ast.literal_eval as fallback."""
-    if not raw or not raw.strip():
-        return {}  # empty string → empty dict
+def looks_like_json(raw: str) -> bool:
+    """
+    Cheap heuristic:
+    - starts with '{'
+    - contains at least one double-quoted key
+    """
+    if not raw:
+        return False
 
-    try:
-        # JSON requires double quotes, so replace single quotes optimistically
-        return json.loads(raw.replace("'", '"'))
-    except json.JSONDecodeError:
+    s = raw.lstrip()
+    return s.startswith('{') and '"' in s
+
+
+def parse_message(raw: str) -> dict:
+    """
+    Best-effort decoder:
+    - JSON if it looks like JSON
+    - ast.literal_eval as fallback
+    - never raises
+    """
+    if not raw or not raw.strip():
+        return {}
+
+    raw = raw.strip()
+
+    # 1) Try JSON only if it actually looks like JSON
+    if looks_like_json(raw):
         try:
-            return ast.literal_eval(raw)
-        except (ValueError, SyntaxError):
-            raise ValueError(f"Cannot parse message: {raw!r}")
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass  # fall through
+
+    # 2) Try Python literal (safe)
+    try:
+        value = ast.literal_eval(raw)
+        return value if isinstance(value, dict) else {}
+    except (ValueError, SyntaxError):
+        xp.log(f"**** Cannot parse message: {raw!r}")
+        return {}
 
 
 def format_message(msg: dict | str) -> str:
@@ -106,9 +132,17 @@ class Dref:
 
     def __init__(self) -> None:
         # standard datarefs
-        self._send_queue = find_dataref('hoppiebridge/send_queue')
-        self._poll_queue = find_dataref('hoppiebridge/poll_queue')
-        self._callsign = find_dataref('hoppiebridge/callsign')
+        self._send_queue = find_dataref('hoppiebridge/send_queue', 'string')  # legacy raw queue
+        self._send_message_to = find_dataref('hoppiebridge/send_message_to', 'string')
+        self._send_message_type = find_dataref('hoppiebridge/send_message_type', 'string')
+        self._send_message_packet = find_dataref('hoppiebridge/send_message_packet', 'string')
+        self._poll_queue = find_dataref('hoppiebridge/poll_queue', 'string')  # legacy raw queue
+        self._poll_message_origin = find_dataref('hoppiebridge/poll_message_origin', 'string')
+        self._poll_message_from = find_dataref('hoppiebridge/poll_message_from', 'string')
+        self._poll_message_type = find_dataref('hoppiebridge/poll_message_type', 'string')
+        self._poll_message_packet = find_dataref('hoppiebridge/poll_message_packet', 'string')
+        self._callsign = find_dataref('hoppiebridge/callsign', 'string')
+        self._poll_queue_clear = find_dataref('hoppiebridge/poll_queue_clear', 'number')
         self._avionics = find_dataref('sim/cockpit/electrical/avionics_on')
 
     @property
@@ -130,24 +164,78 @@ class Dref:
     @property
     def inbox(self) -> dict:
         """Return decoded inbox messages"""
+        if self._poll_message_origin.value.strip() and self._poll_message_packet.value.strip():
+            # structured message
+            return {
+                "origin": self._poll_message_origin.value.strip(),
+                "from": self._poll_message_from.value.strip() or "",
+                "type": self._poll_message_type.value.strip() or "",
+                "packet": self._poll_message_packet.value.strip(),
+            }
         return parse_message(self._poll_queue.value)
 
     @inbox.setter
-    def inbox(self, message: dict | str) -> None:
-        """Set inbox with a message (encoded before storing)"""
-        xp.log(f'  ** add_to_inbox: {message} | type: {type(message)}')
-        self._poll_queue.value = format_message(message)
+    def inbox(self, message: dict | str | None) -> None:
+        """Clear inbox after message is received (legacy and structured) - no value needed"""
+
+        # Clear structured fields
+        self._poll_message_origin.value = ""
+        self._poll_message_from.value = ""
+        self._poll_message_type.value = ""
+        self._poll_message_packet.value = ""
+
+        # Clear legacy queue
+        self._poll_queue.value = ""
 
     @property
     def outbox(self) -> dict:
-        """Return decoded outbox messages"""
-        return parse_message(self._send_queue.value)
+        """Return decoded outbox message, if any"""
+
+        to_ = self._send_message_to.value.strip()
+        type_ = self._send_message_type.value.strip()
+        packet = self._send_message_packet.value.strip()
+
+        # 1. Structured message has priority
+        if to_ and type_ and packet:
+            return {
+                "to": to_,
+                "type": type_,
+                "packet": packet,
+            }
+        elif to_ or type_ or packet:
+            # incomplete structured message
+            xp.log("ACARS outbox: incomplete structured message, ignoring")
+
+        # 2. Legacy raw queue
+        raw = self._send_queue.value.strip()
+        if raw:
+            return parse_message(raw)
+
+        # 3. Nothing to send
+        return {}
 
     @outbox.setter
-    def outbox(self, message: dict | str) -> None:
-        """Set outbox with a message (encoded before storing)"""
-        xp.log(f'  ** add_to_outbox: {message} | type: {type(message)}')
-        self._send_queue.value = format_message(message)
+    def outbox(self, value: dict) -> None:
+        """fill outbox message components drefs from a dict (legacy and structured)"""
+
+        # structured fields
+        to_, type_, packet = value.get("to", ""), value.get("type", ""), value.get("packet", "") 
+        self._send_message_to.value = to_
+        self._send_message_type.value = type_
+        self._send_message_packet.value = packet
+
+        # legacy queue
+        self._send_queue.value = format_message(value)
+
+    @property
+    def clear_inbox(self) -> bool:
+        """Return clear inbox request status"""
+        return bool(self._poll_queue_clear.value)
+
+    @clear_inbox.setter
+    def clear_inbox(self, value: bool | int) -> None:
+        """Set clear inbox request status"""
+        self._poll_queue_clear.value = int(value)
 
 
 class FloatingWidget:
@@ -468,9 +556,10 @@ class PythonInterface:
         self.pending_outbox = []
 
         # widget and windows
+        self.monitor = None
         self.status_text = ""  # text displayed in widget info_line
         self.message_content = []  # content of the messages widget
-        self.create_monitor_window(400, 800)
+        # self.create_monitor_window(400, 800)
 
         # create main menu and widget
         self.main_menu = self.create_main_menu()
@@ -488,6 +577,11 @@ class PythonInterface:
     inbox = property(
         safe_attrgetter("dref.inbox", default={}),
         lambda self, value: setattr(self.dref, "inbox", value)
+    )
+
+    clear_inbox = property(
+        safe_attrgetter("dref.clear_inbox", default=False),
+        lambda self, value: setattr(self.dref, "clear_inbox", value)
     )
 
     @property
@@ -657,9 +751,8 @@ class PythonInterface:
                 self.status_text = f"{t.strftime('%H:%M:%S')} New Message received ..."
                 self.message_content = self.format_message(message)
                 # message received, clear dref
-                self.inbox = ''
+                self.clear_inbox = True
 
-        xp.log(f" {t.strftime('%H:%M:%S')} - loopCallback() ended after {round(perf_counter() - start, 3)} sec | schedule = {loop_schedule} sec")
         return loop_schedule
 
     def XPluginStart(self):
@@ -679,7 +772,12 @@ class PythonInterface:
     def XPluginStop(self):
         # Called once by X-Plane on quit (or when plugins are exiting as part of reload)
         xp.destroyFlightLoop(self.loop_id)
-        xp.log("flightloop closed, exiting ...")
+        # destroy widgets
+        if self.monitor:
+            self.monitor.destroy()
+        # destroy menu
+        xp.destroyMenu(self.main_menu)
+        xp.log("flightloop closed, widgets and menu destroyed, exiting ...")
 
     def XPluginReceiveMessage(self, *args, **kwargs):
         pass
