@@ -13,9 +13,17 @@ The idea is to create a bridge for all the developers that would like to use the
 
 
 This script creates drefs needed to communicate with Hoppie's ACARS system:
-- hoppiebridge/send_queue: data, to send messages to Hoppie's ACARS
-- hoppiebridge/poll_queue: data, to poll messages from Hoppie's ACARS
-- hoppiebridge/callsign: data, to set your callsign
+- hoppiebridge/send_queue: string, to send messages to Hoppie's ACARS (legacy)
+- hoppiebridge/send_message_to — string, destination callsign for structured message.
+- hoppiebridge/send_message_type — mstring, essage type for structured message.
+hoppiebridge/send_message_packet — string, message packet for structured message.
+- hoppiebridge/poll_queue: string, to poll messages from Hoppie's ACARS (legacy)
+- hoppiebridge/poll_message_origin — string, origin of the latest message received ("poll" or "response").
+- hoppiebridge/poll_message_from — string, source callsign of the latest message received.
+- hoppiebridge/poll_message_type — string, type of the latest message received.
+- hoppiebridge/poll_message_packet — string, packet content of the latest message received.
+- hoppiebridge/callsign: string, to set your callsign
+- hoppiebridge/poll_queue_clear — number, set to 1 (or any non-zero value) to clear the inbox datarefs when message is received from client.
 
 received messages will be in poll_queue, and sent messages should be added to send_queue.
 
@@ -28,6 +36,7 @@ The messages for Hoppie's ACARS should be in JSON format, with the following str
 - "to": string, destination callsign or "all"
 - "type": string, type of message, one of "progress", "cpdlc", "telex", "ping", "inforeq", "posreq", "position", "datareq", "poll", or "peek".
 - "packet": string,  the actual message to send
+
 }
 
 further information can be found at https://www.hoppie.nl/acars/system/tech.html
