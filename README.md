@@ -24,6 +24,10 @@ hoppiebridge/send_message_packet — string, message packet for structured messa
 - hoppiebridge/poll_message_packet — string, packet content of the latest message received.
 - hoppiebridge/callsign: string, to set your callsign
 - hoppiebridge/poll_queue_clear — number, set to 1 (or any non-zero value) to clear the inbox datarefs when message is received from client.
+- hoppiebridge/comm_ready — write 1 (or any non-zero value) to notify unit has all conditions to work:
+    - avionics on
+    - callsign set
+    - poll success.
 
 received messages will be in poll_queue, and sent messages should be added to send_queue.
 

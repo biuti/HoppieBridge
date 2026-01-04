@@ -74,7 +74,7 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v0.5-beta.4'
+__VERSION__ = 'v0.5-beta.6'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieBridge'
