@@ -29,7 +29,7 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v0.3-beta.1'
+__VERSION__ = 'v0.5-beta.4'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieClient'
