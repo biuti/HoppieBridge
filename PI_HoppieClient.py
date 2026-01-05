@@ -2,7 +2,7 @@
 HoppieClient
 X-Plane plugin
 
-Copyright (c) 2025, Antonio Golfari
+Copyright (c) 2026, Antonio Golfari
 All rights reserved.
 
 This source code is licensed under the BSD-style license found in the

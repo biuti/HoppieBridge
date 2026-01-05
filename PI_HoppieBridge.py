@@ -43,7 +43,7 @@ Received messages, alike, will be json like string:
 {'response': 'ok {acars info {LIPE 031350Z 05009KT 010V090 9999 BKN055 28/13 Q1014}}'}
 {'poll': 'ok {SERVER telex {LYON APPROACH INFORMATION KILO RECORDED AT 2224Z LFLL 022300Z 16005KT CAVOK 01/M03 Q1009 TEMPO 4000 -SN OVC007 QFE1009 ARR RWY 17L 35R DEP RWY 17R 35L TL FL070 TA 5000FT CONFIRM ATIS INFO KILO ON INITIAL CONTACT}} '}
 
-Copyright (c) 2025, Antonio Golfari
+Copyright (c) 2026, Antonio Golfari
 All rights reserved.
 
 This source code is licensed under the BSD-style license found in the
@@ -991,8 +991,6 @@ class PythonInterface:
             self.comm_ready = False
 
         else:
-            self.status_text = "ACARS ready"
-
             # check if we need to clear inbox
             if self.clear_inbox:
                 self.inbox = ""
