@@ -63,7 +63,8 @@ import re
 
 from pathlib import Path
 from typing import Optional, Dict, Any
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timezone
 from time import perf_counter
 
 try:
@@ -86,6 +87,16 @@ DEFAULT_SCHEDULE = 5  # positive numbers are seconds, 0 disabled, negative numbe
 POLL_SCHEDULE = 65  # seconds
 URL = 'https://www.hoppie.nl/acars/system/connect.html'
 
+# debug 
+DEBUG = True
+
+def log(msg: str) -> None:
+    xp.log(msg)
+
+def debug(msg: str) -> None:
+    if DEBUG:
+        xp.log(msg)
+
 # widget parameters
 MONITOR_WIDTH = 240
 
@@ -98,11 +109,14 @@ try:
     FONT = xp.Font_Proportional
     FONT_WIDTH, FONT_HEIGHT, _ = xp.getFontDimensions(FONT)
     PREF_PATH = Path(xp.getPrefsPath()).parent
-    xp.log(f"font width: {FONT_WIDTH} | height: {FONT_HEIGHT}")
+    debug(f"font width: {FONT_WIDTH} | height: {FONT_HEIGHT}")
 except NameError:
     FONT_WIDTH, FONT_HEIGHT = 10, 10
     PREF_PATH = Path(os.path.dirname(__file__)).parent
 
+# aliases
+Message = dict[str, Any]
+ParsedMessage = tuple[Optional[str], Optional[str], Optional[str], Optional[str]]
 
 # safe attrgetter with default value
 def safe_attrgetter(path, default=None):
@@ -110,7 +124,7 @@ def safe_attrgetter(path, default=None):
         try:
             return operator.attrgetter(path)(obj)
         except Exception as e:
-            xp.log(f"**** {path} Error: {e}")
+            debug(f"**** {path} Error: {e}")
             return default
     return getter
 
@@ -130,10 +144,10 @@ def looks_like_json(raw: str) -> bool:
         return False
 
     s = raw.lstrip()
-    return s.startswith('{') and '"' in s
+    return s.startswith('{') and ':' in s and '"' in s
 
 
-def parse_message(raw: str) -> dict:
+def parse_message(raw: str) -> Message:
     """
     Best-effort decoder:
     - JSON if it looks like JSON
@@ -171,7 +185,7 @@ def format_message(msg: dict | str) -> str:
     return str(msg)
 
 
-def parse_hoppie_message(data: dict):
+def parse_hoppie_message(data: dict) -> ParsedMessage:
     """
     Returns:
         origin (str | None)   -> 'poll' or 'response'
@@ -240,6 +254,7 @@ class Dref:
     @property
     def callsign(self) -> str:
         """Get the callsign"""
+        debug(f'  ** _callsign: {self._callsign.value} | type: {type(self._callsign.value)} | len: {len(self._callsign.value)}')
         return str(self._callsign.value or "").strip()
 
     @callsign.setter
@@ -262,13 +277,13 @@ class Dref:
     @property
     def inbox(self) -> dict:
         """Return decoded inbox messages"""
-        xp.log(f'  ** _poll_queue: {self._poll_queue.value} | type: {type(self._poll_queue.value)} | dim: {self._poll_queue._dim} | len: {len(self._poll_queue.value)}')
+        debug(f'  ** _poll_queue: {self._poll_queue.value} | type: {type(self._poll_queue.value)} | dim: {self._poll_queue._dim} | len: {len(self._poll_queue.value)}')
         return parse_message(self._poll_queue.value)
 
     @inbox.setter
     def inbox(self, message: dict | str) -> None:
         """Set inbox with a message (encoded before storing)"""
-        xp.log(f'  ** add_to_inbox: {message} | type: {type(message)}')
+        debug(f'  ** add_to_inbox: {message} | type: {type(message)}')
         formatted = format_message(message)
         self._poll_queue.value = formatted
         # parse message and set subfields
@@ -303,7 +318,7 @@ class Dref:
             }
         elif to_ or type_ or packet:
             # incomplete structured message
-            xp.log("ACARS outbox: incomplete structured message, ignoring")
+            debug("ACARS outbox: incomplete structured message, ignoring")
 
         # 2. Legacy raw queue
         raw = self._send_queue.value.strip()
@@ -328,6 +343,7 @@ class Dref:
     @property
     def clear_inbox(self) -> bool:
         """Return clear inbox request status"""
+        debug(f'  ** _poll_queue_clear: {self._poll_queue_clear.value} | type: {type(self._poll_queue_clear.value)}')
         return bool(self._poll_queue_clear.value)
 
     @clear_inbox.setter
@@ -350,22 +366,19 @@ class Async(threading.Thread):
     """Async thread to handle connection to Hoppie's ACARS"""
 
     def __init__(self, task, *args, **kwargs) -> None:
-        self.pid = os.getpid()
+        super().__init__(daemon=True)
         self.task = task
-        self.cancel = threading.Event()
         self.args = args
         self.kwargs = kwargs
-        self.elapsed = 0
+        self.cancel = threading.Event()
+        self.elapsed = 0.0
         self.result = None
-        threading.Thread.__init__(self)
-
-        self.daemon = True  # Daemon thread will exit when the main program exits
 
     @property
-    def pending(self):
+    def pending(self) -> bool:
         return self.is_alive()
 
-    def run(self):
+    def run(self) -> None:
         start = perf_counter()
         try:
             self.result = self.task(*self.args, **self.kwargs)
@@ -373,9 +386,9 @@ class Async(threading.Thread):
             self.result = e
         finally:
             self.elapsed = perf_counter() - start
-            print(f"Async task {self.task.__name__} completed in {self.elapsed:.3f} seconds")
+            debug(f"Async task {self.task.__name__} completed in {self.elapsed:.3f} seconds")
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the async task (not really, best effort only)"""
         self.cancel.set()
         if self.is_alive():
@@ -404,10 +417,12 @@ class Bridge:
         bridge = Bridge(message or {}, poll_payload or {})
         response = {}
         try:
-            if bridge.message:
-                response = bridge.query(bridge.message)
-            elif bridge.poll_payload:
-                response = bridge.poll()
+            if message:
+                return bridge.query(message)
+            if poll_payload:
+                return bridge.poll()
+        except requests.Timeout:
+            response = {'error': "Connection Timeout"}
         except requests.RequestException as e:
             response = {'error': f"Connection Error: {str(e)}"}
         return response
@@ -651,7 +666,7 @@ class FloatingWidget:
         else:
             xp.setWindowIsVisible(self.window, 0)
 
-    def setup_widget(self, logon: str = None) -> None:
+    def setup_widget(self, logon: Optional[str] = None) -> None:
         if logon:
             xp.hideWidget(self.logon_input)
             xp.hideWidget(self.save_button)
@@ -688,7 +703,7 @@ class PythonInterface:
         self.logon = ''  # logon string
         self.last_poll_time = 0  # last poll time
         self.async_task = False
-        self.pending_inbox = []
+        self.pending_inbox = deque()  # pending inbox messages
 
         # load settings
         self.load_settings()
@@ -742,7 +757,7 @@ class PythonInterface:
         try:
             return self.dref.avionics_powered
         except Exception as e:
-            xp.log(f'**** avionics_powered Error: {e}')
+            log(f'**** avionics_powered Error: {e}')
         return False
 
     @property
@@ -756,7 +771,7 @@ class PythonInterface:
                 'type': 'poll'
             }
         except Exception as e:
-            xp.log(f'**** poll_payload Error: {e}')
+            log(f'**** poll_payload Error: {e}')
             return {}
 
     @property
@@ -780,14 +795,14 @@ class PythonInterface:
             self.clear_inbox = False
             self.comm_ready = False
         except Exception as e:
-            xp.log(f'**** dref_init Error: {e}')
+            log(f'**** dref_init Error: {e}')
         # check datarefs creation and availability
         try:
             # read datarefs test
             assert isinstance(self.dref._callsign, DataRef)
             assert isinstance(self.dref._avionics, DataRef)
         except AssertionError as e:
-            xp.log(f'**** dref Error: {e}')
+            log(f'**** dref Error: {e}')
             self.dref = None
 
     def create_main_menu(self):
@@ -855,7 +870,7 @@ class PythonInterface:
                 return 1
         return 0
 
-    def format_message(self, data: dict) -> list:
+    def dict_to_lines(self, data: dict) -> list[str]:
         if not self.monitor:
             return []
         width = self.monitor.content_width
@@ -880,19 +895,22 @@ class PythonInterface:
                 data = f.read()
             # parse file
             settings = json.loads(data)
-            xp.log(f"Settings loaded: {settings}")
+            debug(f"Settings loaded: {settings}")
             # check if we have a logon
             self.logon = settings.get('settings').get('logon', '')
             if self.logon:
-                xp.log(f"Logon found: {self.logon}")
+                debug(f"Logon found: {self.logon}")
             return True
         else:
             # open settings window
             return False
 
     def save_settings(self) -> None:
+        if not self.monitor:
+            # sanity check
+            return
         logon = xp.getWidgetDescriptor(self.monitor.logon_input).strip()
-        xp.log(f"logon: {logon}")
+        debug(f"logon: {logon}")
         if logon:
             # save settings
             settings = {'settings': {'logon': logon}}
@@ -905,49 +923,58 @@ class PythonInterface:
 
     def check_async_task(self) -> None:
         """Check the status of the async task"""
+        debug("  ** checking async task ...")
+
+        if not isinstance(self.async_task, Async):
+            # sanity check
+            return
+
         if self.async_task.pending:
+            debug("   * async task still pending ...")
             return
 
         # async task completed
+        debug("   * async task completed ...")
         result = self.async_task.result
         elapsed = self.async_task.elapsed
         self.async_task = None
 
         if isinstance(result, Exception):
-            xp.log(f" **** Async task failed: {result}")
+            debug(f" **** Async task failed: {result}")
             self.status_text = "Connection task failed"
             return
 
+        debug(f"   * async task result: {result} | elapsed: {round(elapsed, 3)} sec")
         if not isinstance(result, dict):
-            xp.log(" **** ACARS Invalid response")
-            self.status_text = "ACARS Invalid response"
-            return
-
-        if not ('poll' in result or 'response' in result):
-            xp.log(" **** ACARS Invalid response")
+            debug(" **** ACARS Invalid response")
             self.status_text = "ACARS Invalid response"
             return
 
         # process result
         if 'error' in result:
-            xp.log(f" **** ACARS Error: {result['error']}")
+            debug(f" **** ACARS Error: {result['error']}")
             self.status_text = f"ACARS Error"
             return
 
         if not ('poll' in result or 'response' in result):
+            debug(" **** ACARS Invalid response")
             self.status_text = "ACARS Invalid response"
             return
 
         # process received message
+        debug(f"Received message: {result}")
         self.waiting_response = False
+        debug(f"comm_ready: {self.comm_ready}")
         if not self.comm_ready and result.get('poll', '').strip().lower() == 'ok':
             # first successful poll {'poll': 'ok '}
             self.comm_ready = True
+            debug("Communication ready")
             self.status_text = "ACARS ready"
         elif not self.inbox:
             self.inbox = result
+            debug("Message added to inbox")
             self.status_text = "New Message received ..."
-            self.message_content = self.format_message(result)
+            self.message_content = self.dict_to_lines(result)
         else:
             # inbox is not empy, we need to wait for client to clean it
             self.pending_inbox.append(result)
@@ -955,6 +982,8 @@ class PythonInterface:
 
     def check_poll_or_send(self) -> None:
         """Check if we need to poll or send messages"""
+        debug("  ** checking poll/send ...")
+        debug(f"   * comm_ready: {self.comm_ready} | outbox: {self.outbox} | time_to_poll: {self.time_to_poll}")
         message = None
         poll_payload = None
         if self.comm_ready and self.outbox:
@@ -968,17 +997,21 @@ class PythonInterface:
                     self.outbox = None
                     self.waiting_response = True
             except Exception as e:
-                xp.log(f" *** Invalid message format, Error: {e}")
+                log(f" *** Invalid message format, Error: {e}")
 
         elif not self.comm_ready or self.time_to_poll:
             # it's time to poll messages or to establish initial communication
             poll_payload = self.poll_payload
             self.last_poll_time = perf_counter()
         else:
+            debug("   * nothing to send or poll ...")
             self.status_text = "ACARS idle"
 
         if message or poll_payload:
             # we have messages to send or it's time to poll
+            debug("  ** starting a new job ...")
+            debug(f"   * message: {message}")
+            debug(f"   * poll_payload: {poll_payload}")
             self.async_task = Async(
                 Bridge.run,
                 message=message,
@@ -989,46 +1022,71 @@ class PythonInterface:
 
     def loopCallback(self, lastCall, elapsedTime, counter, refCon) -> int:
         """Loop Callback"""
-        t = datetime.now()
+
         start = perf_counter()
 
+        # --- Hard blockers -------------------------------------------------
+
         if not self.dref:
-            xp.log("**** Dref not set, aborting ...")
+            debug("**** Dref not set, aborting ...")
             self.status_text = "System Error"
             self.comm_ready = False
+            return DEFAULT_SCHEDULE
 
-        elif not self.avionics_powered:
-            xp.log("**** Avionics off, aborting ...")
+        if not self.avionics_powered:
+            debug("**** Avionics off, aborting ...")
             self.status_text = "System off"
             self.comm_ready = False
+            return DEFAULT_SCHEDULE
 
-        elif not self.logon:
-            xp.log(" *** No Logon, aborting ...")
+        if not self.logon:
+            debug(" *** No Logon, aborting ...")
             self.status_text = "Set Hoppie Logon"
             self.comm_ready = False
+            return DEFAULT_SCHEDULE
 
-        elif not self.callsign:
-            xp.log(" *** waiting for callsign ...")
-            self.status_text = "waiting for callsign"
+        # --- Callsign handling --------------------------------------------
+
+        if self.send_callsign:
+            debug("  ** sending callsign ...")
+            self.callsign = self.send_callsign
+            self.send_callsign = ""
+
+        if not self.callsign:
+            debug(" *** waiting for callsign ...")
+            self.status_text = "waiting for callsign ..."
             self.comm_ready = False
+            return DEFAULT_SCHEDULE
 
+        # --- Main processing ----------------------------------------------
+
+        debug(" *** loopCallback() ...")
+        # debug(f"   * callsign: {self.callsign}")
+        # debug(f'   * inbox: {self.inbox}')
+        # debug(f"   * outbox: {self.outbox}")
+        # debug(f"   * time to poll: {self.time_to_poll}")
+
+        # check if we need to clear inbox
+        if self.clear_inbox:
+            debug("  ** clearing inbox ...")
+            self.inbox = ""
+            self.clear_inbox = False
+
+        # check if we have pending messages
+        if self.pending_inbox and not self.inbox:
+            self.inbox = self.pending_inbox.popleft()
+
+        # check if we have an async task running
+        if self.async_task:
+            self.check_async_task()
         else:
-            # check if we need to clear inbox
-            if self.clear_inbox:
-                self.inbox = ""
-                self.clear_inbox = False
+            # check if we need to poll and / or send messages
+            self.check_poll_or_send()
 
-            # check if we have pending messages
-            if len(self.pending_inbox) and not self.inbox:
-                self.inbox = self.pending_inbox.pop(0)
-
-            # check if we need to send or poll messages
-            if self.async_task:
-                self.check_async_task()
-            else:
-                # check if we need to poll and / or send messages
-                self.check_poll_or_send()
-
+        debug(
+            f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} "
+            f"loopCallback() ended after {perf_counter() - start:.3f}s"
+        )
         return DEFAULT_SCHEDULE
 
     def XPluginStart(self) -> tuple[str, str, str]:
@@ -1040,7 +1098,7 @@ class PythonInterface:
         # loopCallback
         self.loop = self.loopCallback
         self.loop_id = xp.createFlightLoop(self.loop, phase=1)
-        xp.log(f" - {datetime.now().strftime('%H:%M:%S')} Flightloop created, ID {self.loop_id}")
+        debug(f" - {datetime.now(timezone.utc).strftime('%H:%M:%S')} Flightloop created, ID {self.loop_id}")
         xp.scheduleFlightLoop(self.loop_id, interval=DEFAULT_SCHEDULE)
         return 1
 
@@ -1055,7 +1113,7 @@ class PythonInterface:
             self.monitor.destroy()
         # destroy menu
         xp.destroyMenu(self.main_menu)
-        xp.log("flightloop closed, widgets and menu destroyed, exiting ...")
+        debug("flightloop closed, widgets and menu destroyed, exiting ...")
 
     def XPluginReceiveMessage(self, *args, **kwargs) -> None:
         pass
