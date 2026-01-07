@@ -220,13 +220,14 @@ class Dref:
         self._send_message_to = create_dataref('hoppiebridge/send_message_to', 'string')
         self._send_message_type = create_dataref('hoppiebridge/send_message_type', 'string')
         self._send_message_packet = create_dataref('hoppiebridge/send_message_packet', 'string')
+        self._send_callsign = create_dataref('hoppiebridge/send_callsign', 'string')
         self._poll_queue = create_dataref('hoppiebridge/poll_queue', 'string')  # legacy raw queue
         self._poll_message_origin = create_dataref('hoppiebridge/poll_message_origin', 'string')
         self._poll_message_from = create_dataref('hoppiebridge/poll_message_from', 'string')
         self._poll_message_type = create_dataref('hoppiebridge/poll_message_type', 'string')
         self._poll_message_packet = create_dataref('hoppiebridge/poll_message_packet', 'string')
-        self._callsign = create_dataref('hoppiebridge/callsign', 'string')
         self._poll_queue_clear = create_dataref('hoppiebridge/poll_queue_clear', 'number')
+        self._callsign = create_dataref('hoppiebridge/callsign', 'string')
         self._comm_ready = create_dataref('hoppiebridge/comm_ready', 'number')
         # standard datarefs
         self._avionics = find_dataref('sim/cockpit/electrical/avionics_on')
@@ -239,8 +240,24 @@ class Dref:
     @property
     def callsign(self) -> str:
         """Get the callsign"""
-        xp.log(f'  ** _callsign: {self._callsign.value} | type: {type(self._callsign.value)} | len: {len(self._callsign.value)}')
-        return self._callsign.value
+        return str(self._callsign.value or "").strip()
+
+    @callsign.setter
+    def callsign(self, value: str) -> None:
+        """Set the callsign"""
+        debug(f'  ** set _callsign: {value} | type: {type(value)}')
+        self._callsign.value = value
+
+    @property
+    def send_callsign(self) -> str:
+        """Return send callsign request status"""
+        debug(f'  ** _send_callsign: {self._send_callsign.value} | type: {type(self._send_callsign.value)}')
+        return str(self._send_callsign.value or "").strip()
+
+    @send_callsign.setter
+    def send_callsign(self, value: str) -> None:
+        """Set send callsign request status"""
+        self._send_callsign.value = value
 
     @property
     def inbox(self) -> dict:
@@ -689,6 +706,16 @@ class PythonInterface:
         self.waiting_response = False
         self.next_poll_time = 0
 
+    callsign = property(
+        safe_attrgetter("dref.callsign", default=''),
+        lambda self, value: setattr(self.dref, "callsign", value)
+    )
+
+    send_callsign = property(
+        safe_attrgetter("dref.send_callsign", default=''),
+        lambda self, value: setattr(self.dref, "send_callsign", value)
+    )
+
     inbox = property(
         safe_attrgetter("dref.inbox", default={}),
         lambda self, value: setattr(self.dref, "inbox", value)
@@ -700,12 +727,12 @@ class PythonInterface:
     )
 
     clear_inbox = property(
-        safe_attrgetter("dref.clear_inbox", default={}),
+        safe_attrgetter("dref.clear_inbox", default=0),
         lambda self, value: setattr(self.dref, "clear_inbox", value)
     )
 
     comm_ready = property(
-        safe_attrgetter("dref.comm_ready", default={}),
+        safe_attrgetter("dref.comm_ready", default=0),
         lambda self, value: setattr(self.dref, "comm_ready", value)
     )
 
@@ -717,15 +744,6 @@ class PythonInterface:
         except Exception as e:
             xp.log(f'**** avionics_powered Error: {e}')
         return False
-
-    @property
-    def callsign(self) -> str:
-        """Get the callsign from the dref"""
-        try:
-            return self.dref.callsign
-        except Exception as e:
-            xp.log(f'**** callsign Error: {e}')
-        return ''
 
     @property
     def poll_payload(self) -> dict:
@@ -914,6 +932,10 @@ class PythonInterface:
         if 'error' in result:
             xp.log(f" **** ACARS Error: {result['error']}")
             self.status_text = f"ACARS Error"
+            return
+
+        if not ('poll' in result or 'response' in result):
+            self.status_text = "ACARS Invalid response"
             return
 
         # process received message

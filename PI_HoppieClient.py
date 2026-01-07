@@ -142,6 +142,7 @@ class Dref:
         self._poll_message_type = find_dataref('hoppiebridge/poll_message_type')
         self._poll_message_packet = find_dataref('hoppiebridge/poll_message_packet')
         self._callsign = find_dataref('hoppiebridge/callsign')
+        self._send_callsign = find_dataref('hoppiebridge/send_callsign')
         self._poll_queue_clear = find_dataref('hoppiebridge/poll_queue_clear')
         self._comm_ready = find_dataref('hoppiebridge/comm_ready')
         self._avionics = find_dataref('sim/cockpit/electrical/avionics_on')
@@ -159,13 +160,18 @@ class Dref:
     @property
     def callsign(self) -> str:
         """Get the callsign"""
-        return self._callsign.value
+        return str(self._callsign.value or "").strip()
 
-    @callsign.setter
-    def callsign(self, value: str):
+    @property
+    def send_callsign(self) -> str:
+        """Get the callsign"""
+        return str(self._send_callsign.value or "").strip()
+
+    @send_callsign.setter
+    def send_callsign(self, value: str):
         """Set the callsign"""
         if isinstance(value, str):
-            self._callsign.value = value
+            self._send_callsign.value = value
 
     @property
     def inbox(self) -> dict:
@@ -570,9 +576,9 @@ class PythonInterface:
         # create main menu and widget
         self.main_menu = self.create_main_menu()
 
-    callsign = property(
-        safe_attrgetter("dref.callsign", default=''),
-        lambda self, value: setattr(self.dref, "callsign", value)
+    send_callsign = property(
+        safe_attrgetter("dref.send_callsign", default=''),
+        lambda self, value: setattr(self.dref, "send_callsign", value)
     )
 
     outbox = property(
@@ -589,6 +595,15 @@ class PythonInterface:
         safe_attrgetter("dref.clear_inbox", default=False),
         lambda self, value: setattr(self.dref, "clear_inbox", value)
     )
+
+    @property
+    def callsign(self) -> str:
+        """Get the callsign"""
+        try:
+            return self.dref.callsign
+        except Exception as e:
+            xp.log(f'callsign Error: {e}')
+        return ""
 
     @property
     def avionics_powered(self) -> bool:
@@ -698,8 +713,8 @@ class PythonInterface:
     def send_flight_ID(self):
         try:
             ID = xp.getWidgetDescriptor(self.monitor.fight_ID_input).strip().upper()
-            self.callsign = ID
-            xp.log(f'  ** send_flight_ID: {self.dref._callsign.value}')
+            self.send_callsign = ID
+            xp.log(f'  ** send_flight_ID: {self.dref._send_callsign.value}')
         except Exception as e:
             xp.log(f'  ** send_flight_ID Error: {e}')
 
@@ -749,6 +764,7 @@ class PythonInterface:
         t = datetime.now()
         start = perf_counter()
         loop_schedule = DEFAULT_SCHEDULE
+
         if not self.dref:
             xp.log(f"**** Dref not set, aborting ...")
             self.status_text = "System Error"
@@ -757,28 +773,35 @@ class PythonInterface:
             xp.log(f"**** Avionics off, aborting ...")
             self.status_text = "System off"
 
-        elif not self.callsign:
-            xp.log(f" *** waiting for callsign ...")
-            self.status_text = "waiting for callsign"
-
-        elif not self.comm_ready:
-            self.status_text = "connecting ..."
-
         else:
-            self.status_text = "ACARS active ..."
+            if self.callsign != self.send_callsign:
+                xp.log(f" *** setting callsign to {self.send_callsign} ...")
+                self.status_text = f"setting callsign to {self.send_callsign} ..."
+                self.dref.send_callsign = self.send_callsign
 
-            # check if there are pending messages to send
-            if len(self.pending_outbox) and not self.outbox:
-                message = self.pending_outbox.pop()
-                self.outbox = message
-                self.status_text = "sending queued message ..."
-            # check if there are incoming messages
-            if self.inbox:
-                message = self.inbox
-                self.status_text = f"{t.strftime('%H:%M:%S')} New Message received ..."
-                self.message_content = self.format_message(message)
-                # message received, clear dref
-                self.clear_inbox = True
+            if not self.callsign:
+                xp.log(f" *** waiting for callsign ...")
+                self.status_text = "waiting for callsign"
+
+            elif not self.comm_ready:
+                xp.log(f" **** Comm not ready ...")
+                self.status_text = "connecting ..."
+
+            else:
+                self.status_text = "ACARS active ..."
+
+                # check if there are pending messages to send
+                if len(self.pending_outbox) and not self.outbox:
+                    message = self.pending_outbox.pop()
+                    self.outbox = message
+                    self.status_text = "sending queued message ..."
+                # check if there are incoming messages
+                if self.inbox:
+                    message = self.inbox
+                    self.status_text = f"{t.strftime('%H:%M:%S')} New Message received ..."
+                    self.message_content = self.format_message(message)
+                    # message received, clear dref
+                    self.clear_inbox = True
 
         return loop_schedule
 
