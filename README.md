@@ -32,6 +32,9 @@ hoppiebridge/send_message_packet — string, message packet for structured messa
 
 received messages will be in poll_queue, and sent messages should be added to send_queue.
 
+## Installation
+move the file _PI_HoppieBridge.py_ to the _Resources/plugins/PythonPlugins_ folder in X-Plane 12
+
 ## Message format:
 The messages for Hoppie's ACARS should be in JSON format, with the following structure:
 
