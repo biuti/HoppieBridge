@@ -15,16 +15,17 @@ The idea is to create a bridge for all the developers that would like to use the
 This script creates drefs needed to communicate with Hoppie's ACARS system:
 - hoppiebridge/send_queue: string, to send messages to Hoppie's ACARS (legacy)
 - hoppiebridge/send_message_to — string, destination callsign for structured message.
-- hoppiebridge/send_message_type — mstring, essage type for structured message.
+- hoppiebridge/send_message_type — mstring, message type for structured message.
 hoppiebridge/send_message_packet — string, message packet for structured message.
+- hoppiebridge/callsign: string, callsign value
+- hoppiebridge/send_callsign — string, set / change callsign.
 - hoppiebridge/poll_queue: string, to poll messages from Hoppie's ACARS (legacy)
 - hoppiebridge/poll_message_origin — string, origin of the latest message received ("poll" or "response").
 - hoppiebridge/poll_message_from — string, source callsign of the latest message received.
 - hoppiebridge/poll_message_type — string, type of the latest message received.
 - hoppiebridge/poll_message_packet — string, packet content of the latest message received.
-- hoppiebridge/callsign: string, to set your callsign
 - hoppiebridge/poll_queue_clear — number, set to 1 (or any non-zero value) to clear the inbox datarefs when message is received from client.
-- hoppiebridge/comm_ready — write 1 (or any non-zero value) to notify unit has all conditions to work:
+- hoppiebridge/comm_ready — number, set to 1 (or any non-zero value) to notify unit has all conditions to work:
     - avionics on
     - callsign set
     - poll success.
@@ -60,7 +61,7 @@ Following Hoppie's ACARS suggestions, poll will be activated every 65 seconds, w
 
 When a message requiring an answer is sent, poll frequency will change to 20 seconds until an answer is received
 
-Copyright (c) 2025, Antonio Golfari
+Copyright (c) 2026, Antonio Golfari
 All rights reserved.
 
 This source code is licensed under the BSD-style license found in the

@@ -3,10 +3,11 @@ HoppieBridge
 X-Plane plugin
 
 This X-Plane plugin exposes eleven string datarefs used to integrate with Hoppie’s ACARS:
-    hoppiebridge/send_queue — write a JSON string to send a message.
-    hoppiebridge/send_message_to — write destination callsign for structured message.
-    hoppiebridge/send_message_type — write message type for structured message.
-    hoppiebridge/send_message_packet — write message packet for structured message.
+    hoppiebridge/send_queue — clients write a JSON string to send a message.
+    hoppiebridge/send_message_to — clients write destination callsign for structured message.
+    hoppiebridge/send_message_type — clients write message type for structured message.
+    hoppiebridge/send_message_packet — clients write message packet for structured message.
+    hoppiebridge/send_callsign — clients write callsign.
     hoppiebridge/poll_queue — read the latest received message as a JSON string.
     hoppiebridge/poll_message_origin — read the origin of the latest message received ("poll" or "response").
     hoppiebridge/poll_message_from — read the source callsign of the latest message received.
@@ -34,14 +35,13 @@ Inbox/outbox datarefs carry JSON strings; if upstream provides single-quoted dic
 
 further information can be found at https://www.hoppie.nl/acars/system/tech.html
 
-As Dref do not permit Array of data, inbox and outbox dref will be json like string that will be encoded and decoded
-before sending to the communication bridge.
+Notes:
+- inbox/outbox datarefs carry JSON-like strings due to X-Plane string limitations
+- legacy single-quoted dicts are accepted via literal_eval fallback
 
-Strings sent to outbox dref will be like:
-{"to": "SERVER", "type": "inforeq", "packet": "METAR LIPE"}
-Received messages, alike, will be json like string:
-{'response': 'ok {acars info {LIPE 031350Z 05009KT 010V090 9999 BKN055 28/13 Q1014}}'}
-{'poll': 'ok {SERVER telex {LYON APPROACH INFORMATION KILO RECORDED AT 2224Z LFLL 022300Z 16005KT CAVOK 01/M03 Q1009 TEMPO 4000 -SN OVC007 QFE1009 ARR RWY 17L 35R DEP RWY 17R 35L TL FL070 TA 5000FT CONFIRM ATIS INFO KILO ON INITIAL CONTACT}} '}
+Examples:
+    {"to": "SERVER", "type": "inforeq", "packet": "METAR LIPE"}
+    {'response': 'ok {acars info {...}}'}
 
 Copyright (c) 2026, Antonio Golfari
 All rights reserved.
@@ -149,11 +149,15 @@ def looks_like_json(raw: str) -> bool:
 
 def parse_message(raw: str) -> Message:
     """
-    Best-effort decoder:
-    - JSON if it looks like JSON
-    - ast.literal_eval as fallback
-    - never raises
+    Best-effort decoder for inbox/outbox payloads.
+
+    Tries:
+    1) strict JSON (only if payload looks like JSON)
+    2) Python literal_eval as a safe fallback
+
+    Never raises; returns empty dict on failure.
     """
+
     if not raw or not raw.strip():
         return {}
 
@@ -171,7 +175,7 @@ def parse_message(raw: str) -> Message:
         value = ast.literal_eval(raw)
         return value if isinstance(value, dict) else {}
     except (ValueError, SyntaxError):
-        xp.log(f"**** Cannot parse message: {raw!r}")
+        debug(f"**** Cannot parse message: {raw!r}")
         return {}
 
 
@@ -187,11 +191,13 @@ def format_message(msg: dict | str) -> str:
 
 def parse_hoppie_message(data: dict) -> ParsedMessage:
     """
-    Returns:
-        origin (str | None)   -> 'poll' or 'response'
-        source (str | None)
-        msg_type (str | None)
-        packet (str | None)
+    Parse a Hoppie ACARS response payload.
+
+    Returns a 4-tuple:
+        origin   -> 'poll' | 'response' | None
+        source   -> sender callsign or None
+        msg_type -> message type or None
+        packet   -> payload or None
     """
 
     # Detect origin first (politics matter)

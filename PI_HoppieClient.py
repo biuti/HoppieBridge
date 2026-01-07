@@ -176,6 +176,7 @@ class Dref:
     @property
     def inbox(self) -> dict:
         """Return decoded inbox messages"""
+        xp.log(f'  ** _poll_queue: {self._poll_queue.value} | type: {type(self._poll_queue.value)} | dim: {self._poll_queue._dim} | len: {len(self._poll_queue.value)}')
         if self._poll_message_origin.value.strip() and self._poll_message_packet.value.strip():
             # structured message
             return {
@@ -242,6 +243,7 @@ class Dref:
     @property
     def clear_inbox(self) -> bool:
         """Return clear inbox request status"""
+        xp.log(f'  ** _poll_queue_clear: {self._poll_queue_clear.value} | type: {type(self._poll_queue_clear.value)}')
         return bool(self._poll_queue_clear.value)
 
     @clear_inbox.setter
@@ -803,6 +805,7 @@ class PythonInterface:
                     # message received, clear dref
                     self.clear_inbox = True
 
+        xp.log(f" {t.strftime('%H:%M:%S')} - loopCallback() ended after {round(perf_counter() - start, 3)} sec | schedule = {loop_schedule} sec")
         return loop_schedule
 
     def XPluginStart(self):
