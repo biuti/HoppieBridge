@@ -75,7 +75,7 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v1.1-beta.1'
+__VERSION__ = 'v1.1-beta.2'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieBridge'
@@ -755,7 +755,6 @@ class PythonInterface:
         self.main_menu = self.create_main_menu()
 
         # status
-        self.waiting_response = False
         self.next_poll_time = 0
 
     callsign = property(
@@ -839,7 +838,7 @@ class PythonInterface:
 
     def calculate_next_poll_time(self) -> None:
         """Calculate the next poll time."""
-        debug(f" ** Calculating next poll time (fast: {self.dref.fast_poll}) | waiting_response: {self.waiting_response}", "POLL")
+        debug(f" ** Calculating next poll time (fast: {self.dref.fast_poll})", "POLL")
         self.next_poll_time = perf_counter() + self.poll_frequency
 
     def dref_init(self) -> None:
@@ -1014,7 +1013,6 @@ class PythonInterface:
 
         # process received message
         debug(f"Received message: {result}", "ASYNC")
-        self.waiting_response = False
         debug(f"comm_ready: {self.comm_ready}", "ASYNC")
         if not self.comm_ready and result.get('poll', '').strip().lower() == 'ok':
             # first successful poll {'poll': 'ok '}
@@ -1046,7 +1044,6 @@ class PythonInterface:
                     message['logon'] = self.logon
                     message['from'] = self.callsign
                     self.outbox = None
-                    self.waiting_response = True
             except Exception as e:
                 log(f" *** Invalid message format, Error: {e}")
 
