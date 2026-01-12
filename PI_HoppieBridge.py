@@ -8,6 +8,7 @@ This X-Plane plugin exposes eleven string datarefs used to integrate with Hoppie
     hoppiebridge/send_message_type — clients write message type for structured message.
     hoppiebridge/send_message_packet — clients write message packet for structured message.
     hoppiebridge/send_callsign — clients write callsign.
+    hoppiebridge/poll_frequency_fast — clients write 1 (or any non-zero value) to enable fast polling (around 15 seconds), 0 for normal polling (45 ~ 75 seconds).
     hoppiebridge/poll_queue — read the latest received message as a JSON string.
     hoppiebridge/poll_message_origin — read the origin of the latest message received ("poll" or "response").
     hoppiebridge/poll_message_from — read the source callsign of the latest message received.
