@@ -75,20 +75,24 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v1.0'
+__VERSION__ = 'v1.1-beta.1'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieBridge'
 plugin_sig = 'xppython3.hoppiebridge'
 plugin_desc = 'Simple Python script to add drefs for Hoppie\'s ACARS'
 
-# Other parameters
+# Loopback Schedule
 DEFAULT_SCHEDULE = 5  # positive numbers are seconds, 0 disabled, negative numbers are cycles
-POLL_SCHEDULE = 65  # seconds
+
+# ACARS poll frequency schedule
+POLL_DEFAULT_SCHEDULE = (45, 75)  # seconds
+POLL_FAST_SCHEDULE = (12, 18)     # seconds
+
 URL = 'https://www.hoppie.nl/acars/system/connect.html'
 
 # debug 
-DEBUG = False
+DEBUG = True
 
 def log(msg: str) -> None:
     xp.log(msg)
@@ -241,6 +245,7 @@ class Dref:
         self._send_message_type = create_dataref('hoppiebridge/send_message_type', 'string')
         self._send_message_packet = create_dataref('hoppiebridge/send_message_packet', 'string')
         self._send_callsign = create_dataref('hoppiebridge/send_callsign', 'string')
+        self._poll_frequency_fast = create_dataref('hoppiebridge/poll_frequency_fast', 'number')  # 0 = normal (45 ~ 75 seconds), 1 = fast (around 15 seconds)
         self._poll_queue = create_dataref('hoppiebridge/poll_queue', 'string')  # legacy raw queue
         self._poll_message_origin = create_dataref('hoppiebridge/poll_message_origin', 'string')
         self._poll_message_from = create_dataref('hoppiebridge/poll_message_from', 'string')
@@ -251,6 +256,22 @@ class Dref:
         self._comm_ready = create_dataref('hoppiebridge/comm_ready', 'number')
         # standard datarefs
         self._avionics = find_dataref('sim/cockpit/electrical/avionics_on')
+
+        # set default values
+        self._send_queue.value
+        self._send_message_to.value = ""
+        self._send_message_type.value = ""
+        self._send_message_packet.value = ""
+        self._send_callsign.value = ""
+        self._poll_frequency_fast.value = 0
+        self._poll_queue.value = ""
+        self._poll_message_origin.value = ""
+        self._poll_message_from.value = ""
+        self._poll_message_type.value = ""
+        self._poll_message_packet.value = ""
+        self._poll_queue_clear.value = 0
+        self._callsign.value = ""
+        self._comm_ready.value = 0
 
     @property
     def avionics_powered(self) -> bool:
@@ -279,6 +300,16 @@ class Dref:
     def send_callsign(self, value: str) -> None:
         """Set send callsign request status"""
         self._send_callsign.value = value
+
+    @property
+    def fast_poll(self) -> bool:
+        """Return the fast polling frequency"""
+        return bool(self._poll_frequency_fast.value)
+
+    @fast_poll.setter
+    def fast_poll(self, value: bool | int) -> None:
+        """Set the fast polling frequency"""
+        self._poll_frequency_fast.value = int(bool(value))
 
     @property
     def inbox(self) -> dict:
@@ -758,6 +789,18 @@ class PythonInterface:
     )
 
     @property
+    def poll_frequency(self) -> int:
+        """Get the poll frequency in seconds"""
+        try:
+            if self.fast_poll:
+                return random_connection_time(*POLL_FAST_SCHEDULE)
+            else:
+                return random_connection_time(*POLL_DEFAULT_SCHEDULE)
+        except Exception as e:
+            log(f'**** poll_frequency Error: {e}')
+        return random_connection_time(*POLL_DEFAULT_SCHEDULE)
+
+    @property
     def avionics_powered(self) -> bool:
         """Check if avionics are on"""
         try:
@@ -781,25 +824,27 @@ class PythonInterface:
             return {}
 
     @property
+    def fast_poll(self) -> bool:
+        """Check if fast polling is enabled"""
+        try:
+            return self.dref.fast_poll
+        except Exception as e:
+            log(f'**** fast_poll Error: {e}')
+        return False
+
+    @property
     def time_to_poll(self) -> bool:
         """Check if it's time to poll messages"""
         return perf_counter() >= self.next_poll_time
 
     def calculate_next_poll_time(self) -> None:
         """Calculate the next poll time."""
-        if self.waiting_response:
-            self.next_poll_time = perf_counter() + random_connection_time(18, 24)
-        else:
-            self.next_poll_time = perf_counter() + random_connection_time(45, 75)
+        debug(f" ** Calculating next poll time (fast: {self.dref.fast_poll}) | waiting_response: {self.waiting_response}", "POLL")
+        self.next_poll_time = perf_counter() + self.poll_frequency
 
     def dref_init(self) -> None:
         try:
             self.dref = Dref()
-            # reset dref values
-            self.inbox = {}
-            self.outbox = {}
-            self.clear_inbox = False
-            self.comm_ready = False
         except Exception as e:
             log(f'**** dref_init Error: {e}')
         # check datarefs creation and availability

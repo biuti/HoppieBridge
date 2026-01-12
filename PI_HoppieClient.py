@@ -29,7 +29,7 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v0.7-beta.1'
+__VERSION__ = 'v1.1-beta.1'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieClient'
@@ -136,6 +136,7 @@ class Dref:
         self._send_message_to = find_dataref('hoppiebridge/send_message_to')
         self._send_message_type = find_dataref('hoppiebridge/send_message_type')
         self._send_message_packet = find_dataref('hoppiebridge/send_message_packet')
+        self._poll_frequency_fast = find_dataref('hoppiebridge/poll_frequency_fast')
         self._poll_queue = find_dataref('hoppiebridge/poll_queue')  # legacy raw queue
         self._poll_message_origin = find_dataref('hoppiebridge/poll_message_origin')
         self._poll_message_from = find_dataref('hoppiebridge/poll_message_from')
@@ -172,6 +173,16 @@ class Dref:
         """Set the callsign"""
         if isinstance(value, str):
             self._send_callsign.value = value
+
+    @property
+    def fast_poll(self) -> bool:
+        """Return the fast polling frequency"""
+        return bool(self._poll_frequency_fast.value)
+
+    @fast_poll.setter
+    def fast_poll(self, value: bool | int) -> None:
+        """Set the fast polling frequency"""
+        self._poll_frequency_fast.value = int(bool(value))
 
     @property
     def inbox(self) -> dict:
@@ -598,6 +609,11 @@ class PythonInterface:
         lambda self, value: setattr(self.dref, "clear_inbox", value)
     )
 
+    fast_poll = property(
+        safe_attrgetter("dref.fast_poll", default=False),
+        lambda self, value: setattr(self.dref, "fast_poll", value)
+    )
+
     @property
     def callsign(self) -> str:
         """Get the callsign"""
@@ -712,7 +728,7 @@ class PythonInterface:
                 return 1
         return 0
 
-    def send_flight_ID(self):
+    def send_flight_ID(self) -> None:
         try:
             ID = xp.getWidgetDescriptor(self.monitor.fight_ID_input).strip().upper()
             self.send_callsign = ID
@@ -735,6 +751,9 @@ class PythonInterface:
         if not self.outbox and not len(self.pending_outbox):
             self.outbox = message
             self.status_text = f"Requesting {self.message_type} ..."
+            xp.log(f" **** fast_poll set to True after sending message")
+            self.fast_poll = True
+            xp.log(f" **** fast_poll value: {self.fast_poll} | dref: {self.dref.fast_poll}")
         else:
             self.pending_outbox.append(message)
 
@@ -804,6 +823,9 @@ class PythonInterface:
                     self.message_content = self.format_message(message)
                     # message received, clear dref
                     self.clear_inbox = True
+                    xp.log(f" **** fast_poll set to False after message received")
+                    self.fast_poll = False
+                    xp.log(f" **** fast_poll value: {self.fast_poll} | dref: {self.dref.fast_poll}")
 
         xp.log(f" {t.strftime('%H:%M:%S')} - loopCallback() ended after {round(perf_counter() - start, 3)} sec | schedule = {loop_schedule} sec")
         return loop_schedule
