@@ -93,7 +93,7 @@ POLL_FAST_SCHEDULE = (12, 18)     # seconds
 URL = 'https://www.hoppie.nl/acars/system/connect.html'
 
 # debug 
-DEBUG = True
+DEBUG = False
 
 def log(msg: str) -> None:
     xp.log(msg)
