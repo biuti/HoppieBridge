@@ -8,6 +8,7 @@ This X-Plane plugin exposes eleven string datarefs used to integrate with Hoppie
     hoppiebridge/send_message_type — clients write message type for structured message.
     hoppiebridge/send_message_packet — clients write message packet for structured message.
     hoppiebridge/send_callsign — clients write callsign.
+    hoppiebridge/poll_frequency_fast — clients write 1 (or any non-zero value) to enable fast polling (around 15 seconds), 0 for normal polling (45 ~ 75 seconds).
     hoppiebridge/poll_queue — read the latest received message as a JSON string.
     hoppiebridge/poll_message_origin — read the origin of the latest message received ("poll" or "response").
     hoppiebridge/poll_message_from — read the source callsign of the latest message received.
@@ -75,20 +76,26 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v1.0'
+__VERSION__ = 'v2.0-beta.1'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieBridge'
 plugin_sig = 'xppython3.hoppiebridge'
 plugin_desc = 'Simple Python script to add drefs for Hoppie\'s ACARS'
 
-# Other parameters
+# Loopback Schedule
 DEFAULT_SCHEDULE = 5  # positive numbers are seconds, 0 disabled, negative numbers are cycles
-POLL_SCHEDULE = 65  # seconds
-URL = 'https://www.hoppie.nl/acars/system/connect.html'
+
+# ACARS poll frequency schedule
+POLL_DEFAULT_SCHEDULE = (45, 75)  # seconds
+POLL_FAST_SCHEDULE = (12, 18)     # seconds
+
+# servers
+HOPPIE = 'https://www.hoppie.nl/acars/system/connect.html'
+SAYINTENTIONS = 'https://acars.sayintentions.ai/acars/system/connect.html'
 
 # debug 
-DEBUG = False
+DEBUG = True
 
 def log(msg: str) -> None:
     xp.log(msg)
@@ -241,6 +248,7 @@ class Dref:
         self._send_message_type = create_dataref('hoppiebridge/send_message_type', 'string')
         self._send_message_packet = create_dataref('hoppiebridge/send_message_packet', 'string')
         self._send_callsign = create_dataref('hoppiebridge/send_callsign', 'string')
+        self._poll_frequency_fast = create_dataref('hoppiebridge/poll_frequency_fast', 'number')  # 0 = normal (45 ~ 75 seconds), 1 = fast (around 15 seconds)
         self._poll_queue = create_dataref('hoppiebridge/poll_queue', 'string')  # legacy raw queue
         self._poll_message_origin = create_dataref('hoppiebridge/poll_message_origin', 'string')
         self._poll_message_from = create_dataref('hoppiebridge/poll_message_from', 'string')
@@ -251,6 +259,22 @@ class Dref:
         self._comm_ready = create_dataref('hoppiebridge/comm_ready', 'number')
         # standard datarefs
         self._avionics = find_dataref('sim/cockpit/electrical/avionics_on')
+
+        # set default values
+        self._send_queue.value
+        self._send_message_to.value = ""
+        self._send_message_type.value = ""
+        self._send_message_packet.value = ""
+        self._send_callsign.value = ""
+        self._poll_frequency_fast.value = 0
+        self._poll_queue.value = ""
+        self._poll_message_origin.value = ""
+        self._poll_message_from.value = ""
+        self._poll_message_type.value = ""
+        self._poll_message_packet.value = ""
+        self._poll_queue_clear.value = 0
+        self._callsign.value = ""
+        self._comm_ready.value = 0
 
     @property
     def avionics_powered(self) -> bool:
@@ -279,6 +303,16 @@ class Dref:
     def send_callsign(self, value: str) -> None:
         """Set send callsign request status"""
         self._send_callsign.value = value
+
+    @property
+    def fast_poll(self) -> bool:
+        """Return the fast polling frequency"""
+        return bool(self._poll_frequency_fast.value)
+
+    @fast_poll.setter
+    def fast_poll(self, value: bool | int) -> None:
+        """Set the fast polling frequency"""
+        self._poll_frequency_fast.value = int(bool(value))
 
     @property
     def inbox(self) -> dict:
@@ -402,8 +436,7 @@ class Async(threading.Thread):
 
 
 class Bridge:
-    """Connection to Hoppie's ACARS"""
-    url = URL
+    """Connection to Server's ACARS"""
     _session: requests.Session | None = None
 
     @classmethod
@@ -414,13 +447,14 @@ class Bridge:
             cls._session = s
         return cls._session
 
-    def __init__(self, message: dict, poll_payload: dict) -> None:
+    def __init__(self, url: str, message: dict, poll_payload: dict) -> None:
+        self.url = url
         self.message = message
         self.poll_payload = poll_payload
 
     @staticmethod
-    def run(message: Optional[dict] = None, poll_payload: Optional[dict] = None) -> dict:
-        bridge = Bridge(message or {}, poll_payload or {})
+    def run(url: str, message: Optional[dict] = None, poll_payload: Optional[dict] = None) -> dict:
+        bridge = Bridge(url=url, message=message or {}, poll_payload=poll_payload or {})
         response = {}
         try:
             if message:
@@ -574,29 +608,63 @@ class FloatingWidget:
         self.pilot_info_subwindow = self.add_subwindow(lines=2)
         l, t, r, b = self.get_subwindow_margins(lines=2)
         # user info widgets
-        caption = xp.createWidget(
+        xp.createWidget(
             l, t, l + 90, t - self.LINE,
-            1, 'Hoppie LOGON:', 0, self.widget, xp.WidgetClass_Caption
+            1, 'SERVER:', 0, self.widget, xp.WidgetClass_Caption
+        )
+        t -= self.cr()
+        xp.createWidget(l, t, l + 90, t - self.LINE,
+            1, 'HOPPIE', 0, self.widget, xp.WidgetClass_Caption
+        )
+        l += 90
+        hoppie_check = xp.createWidget(
+            l, t, l + 145, b,
+            1, '', 0, self.widget, xp.WidgetClass_Button
+        )
+        t -= self.cr()
+        xp.createWidget(l + 145 + 20, t, l + 145 + 20 + 40, t - self.LINE,
+            1, 'SAYINTENTIONS', 0, self.widget, xp.WidgetClass_Caption
+        )
+        l += 145 + 20 + 40
+        sayint_check = xp.createWidget(
+            l, t, l + 145, b,
+            1, '', 0, self.widget, xp.WidgetClass_Button
+        )
+
+        self.server_check = {
+            hoppie_check: 'hoppie',
+            sayint_check: 'sayintention'
+        }
+
+        for k, v in self.server_check.items():
+            xp.setWidgetProperty(k, xp.Property_ButtonState, xp.RadioButton)
+            xp.setWidgetProperty(k, xp.Property_ButtonBehavior, xp.ButtonBehaviorRadioButton)
+            xp.setWidgetProperty(k, xp.Property_ButtonState, v == 'hoppie')
+
+        xp.createWidget(
+            l, t, l + 200, t - self.LINE,
+            1, 'LOGON:', 0, self.widget, xp.WidgetClass_Caption
         )
         t -= self.cr()
         self.logon_input = xp.createWidget(
-            l, t, l + 145, b,
+            l, t, l + 255, b,
             1, "", 0, self.widget, xp.WidgetClass_TextField
         )
         xp.setWidgetProperty(self.logon_input, xp.Property_MaxCharacters, 24)
         self.logon_caption = xp.createWidget(
-            l, t, l + 145, b,
+            l, t, l + 255, b,
             1, "", 0, self.widget, xp.WidgetClass_Caption
         )
         self.save_button = xp.createWidget(
-            l + 148, t, r, b,
+            l + 258, t, r, b,
             1, "SAVE", 0, self.widget, xp.WidgetClass_Button
         )
         self.edit_button = xp.createWidget(
-            l + 148, t, r, b,
+            l + 258, t, r, b,
             1, "CHANGE", 0, self.widget, xp.WidgetClass_Button
         )
         self.top = b - self.cr()
+
 
     def add_content_widget(self, title: str = "", lines: Optional[int] = None) -> None:
         self.content_widget['subwindow'] = self.add_subwindow(lines=lines)
@@ -706,7 +774,9 @@ class PythonInterface:
         self.dref = None  # dataref initialization in XPluginEnable to avoid issues with string type
 
         # app init
-        self.logon = ''  # logon string
+        self.selected_server = HOPPIE
+        self.hoppie_logon = ''  # hoppie logon string
+        self.sayintentions_logon = ''  # sayintentions logon string
         self.last_poll_time = 0  # last poll time
         self.async_task = False
         self.pending_inbox = deque()  # pending inbox messages
@@ -724,7 +794,6 @@ class PythonInterface:
         self.main_menu = self.create_main_menu()
 
         # status
-        self.waiting_response = False
         self.next_poll_time = 0
 
     callsign = property(
@@ -758,6 +827,18 @@ class PythonInterface:
     )
 
     @property
+    def poll_frequency(self) -> int:
+        """Get the poll frequency in seconds"""
+        try:
+            if self.fast_poll:
+                return random_connection_time(*POLL_FAST_SCHEDULE)
+            else:
+                return random_connection_time(*POLL_DEFAULT_SCHEDULE)
+        except Exception as e:
+            log(f'**** poll_frequency Error: {e}')
+        return random_connection_time(*POLL_DEFAULT_SCHEDULE)
+
+    @property
     def avionics_powered(self) -> bool:
         """Check if avionics are on"""
         try:
@@ -781,25 +862,35 @@ class PythonInterface:
             return {}
 
     @property
+    def fast_poll(self) -> bool:
+        """Check if fast polling is enabled"""
+        try:
+            return self.dref.fast_poll
+        except Exception as e:
+            log(f'**** fast_poll Error: {e}')
+        return False
+
+    @property
     def time_to_poll(self) -> bool:
         """Check if it's time to poll messages"""
         return perf_counter() >= self.next_poll_time
 
     def calculate_next_poll_time(self) -> None:
         """Calculate the next poll time."""
-        if self.waiting_response:
-            self.next_poll_time = perf_counter() + random_connection_time(18, 24)
+        debug(f" ** Calculating next poll time (fast: {self.dref.fast_poll})", "POLL")
+        self.next_poll_time = perf_counter() + self.poll_frequency
+
+    @property
+    def logon(self) -> str:
+        """Get the logon string for the selected server."""
+        if self.selected_server == HOPPIE:
+            return self.hoppie_logon
         else:
-            self.next_poll_time = perf_counter() + random_connection_time(45, 75)
+            return self.sayintentions_logon
 
     def dref_init(self) -> None:
         try:
             self.dref = Dref()
-            # reset dref values
-            self.inbox = {}
-            self.outbox = {}
-            self.clear_inbox = False
-            self.comm_ready = False
         except Exception as e:
             log(f'**** dref_init Error: {e}')
         # check datarefs creation and availability
@@ -903,9 +994,13 @@ class PythonInterface:
             settings = json.loads(data)
             debug(f"Settings loaded: {settings}", "SETTINGS")
             # check if we have a logon
-            self.logon = settings.get('settings').get('logon', '')
-            if self.logon:
-                debug(f"Logon found: {self.logon}")
+            self.hoppie_logon = settings.get('settings').get('logon') if 'logon' in settings.keys() else settings.get('settings').get('hoppie_logon', '')
+            self.sayintentions_logon = settings.get('settings').get('sayintentions_logon', '')
+            self.selected_server = HOPPIE if settings.get('settings').get('selected_server', 'hoppie') == 'hoppie' else SAYINTENTIONS
+            if self.hoppie_logon:
+                debug(f"Hoppie Logon found: {self.hoppie_logon}")
+            if self.sayintentions_logon:
+                debug(f"SayIntentions Logon found: {self.sayintentions_logon}")
             return True
         else:
             # open settings window
@@ -919,7 +1014,14 @@ class PythonInterface:
         debug(f"logon: {logon}", "SETTINGS")
         if logon:
             # save settings
-            settings = {'settings': {'logon': logon}}
+            settings = {
+                'settings': {
+                    'hoppie_logon': self.hoppie_logon or '',
+                    'sayintentions_logon': self.sayintentions_logon or '',
+                    'selected_server': 'hoppie' if self.selected_server == HOPPIE else 'sayintentions',
+                }
+            }
+
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(settings, f)
             # check file
@@ -969,7 +1071,6 @@ class PythonInterface:
 
         # process received message
         debug(f"Received message: {result}", "ASYNC")
-        self.waiting_response = False
         debug(f"comm_ready: {self.comm_ready}", "ASYNC")
         if not self.comm_ready and result.get('poll', '').strip().lower() == 'ok':
             # first successful poll {'poll': 'ok '}
@@ -1001,7 +1102,6 @@ class PythonInterface:
                     message['logon'] = self.logon
                     message['from'] = self.callsign
                     self.outbox = None
-                    self.waiting_response = True
             except Exception as e:
                 log(f" *** Invalid message format, Error: {e}")
 
@@ -1020,6 +1120,7 @@ class PythonInterface:
             debug(f"   * poll_payload: {poll_payload}", "ASYNC")
             self.async_task = Async(
                 Bridge.run,
+                url=self.selected_server,
                 message=message,
                 poll_payload=poll_payload,
             )
