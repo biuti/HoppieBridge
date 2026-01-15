@@ -2,7 +2,7 @@
 HoppieBridge
 X-Plane plugin
 
-This X-Plane plugin exposes eleven string datarefs used to integrate with Hoppie’s ACARS:
+This X-Plane plugin exposes eleven string datarefs used to integrate with Hoppie’s ACARS server or SayIntentions ACARS service:
     hoppiebridge/send_queue — clients write a JSON string to send a message.
     hoppiebridge/send_message_to — clients write destination callsign for structured message.
     hoppiebridge/send_message_type — clients write message type for structured message.
@@ -63,7 +63,7 @@ import random
 import re
 
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Any
 from collections import deque
 from datetime import datetime, timezone
 from time import perf_counter
@@ -76,7 +76,7 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v2.0-beta.1'
+__VERSION__ = 'v2.0-beta.2'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieBridge'
@@ -105,7 +105,7 @@ def debug(msg: str, tag: str = "DEBUG") -> None:
         xp.log(f"[{tag}] {msg}")
 
 # widget parameters
-MONITOR_WIDTH = 240
+MONITOR_WIDTH = 300
 
 HOPPIE_PATTERN = re.compile(
     r'\{([^\s]+)\s+([^\s]+)\s+\{(.+?)\}\}',
@@ -497,8 +497,8 @@ class Bridge:
 class FloatingWidget:
 
     LINE = FONT_HEIGHT + 4
-    WIDTH = 240
-    HEIGHT = 320
+    WIDTH = 300
+    HEIGHT = 420
     HEIGHT_MIN = 100
     MARGIN = 10
     HEADER = 16
@@ -521,6 +521,7 @@ class FloatingWidget:
             'title': None,
             'lines': []
         }
+        self.server_check = {}
 
         # main widget
         self.widget = xp.createWidget(
@@ -605,29 +606,30 @@ class FloatingWidget:
 
     def add_user_info_widget(self) -> None:
         # user info subwindow
-        self.pilot_info_subwindow = self.add_subwindow(lines=2)
-        l, t, r, b = self.get_subwindow_margins(lines=2)
+        self.pilot_info_subwindow = self.add_subwindow(lines=6)
+        l, t, r, b = self.get_subwindow_margins(lines=6)
+        l0 = l
         # user info widgets
         xp.createWidget(
             l, t, l + 90, t - self.LINE,
             1, 'SERVER:', 0, self.widget, xp.WidgetClass_Caption
         )
         t -= self.cr()
-        xp.createWidget(l, t, l + 90, t - self.LINE,
+        cw = 30
+        xp.createWidget(l, t, l + 40, t - self.LINE,
             1, 'HOPPIE', 0, self.widget, xp.WidgetClass_Caption
         )
-        l += 90
+        l += 50
         hoppie_check = xp.createWidget(
-            l, t, l + 145, b,
+            l, t, l + cw, t - self.LINE,
             1, '', 0, self.widget, xp.WidgetClass_Button
         )
-        t -= self.cr()
-        xp.createWidget(l + 145 + 20, t, l + 145 + 20 + 40, t - self.LINE,
+        l = r - cw - 100
+        xp.createWidget(l, t, r - cw - 10, t - self.LINE,
             1, 'SAYINTENTIONS', 0, self.widget, xp.WidgetClass_Caption
         )
-        l += 145 + 20 + 40
         sayint_check = xp.createWidget(
-            l, t, l + 145, b,
+            r - cw, t, r, t - self.LINE,
             1, '', 0, self.widget, xp.WidgetClass_Button
         )
 
@@ -641,30 +643,33 @@ class FloatingWidget:
             xp.setWidgetProperty(k, xp.Property_ButtonBehavior, xp.ButtonBehaviorRadioButton)
             xp.setWidgetProperty(k, xp.Property_ButtonState, v == 'hoppie')
 
+        t -= self.cr()
+        l = l0
         xp.createWidget(
-            l, t, l + 200, t - self.LINE,
+            l, t, l + 80, t - self.LINE,
             1, 'LOGON:', 0, self.widget, xp.WidgetClass_Caption
         )
         t -= self.cr()
+        s = r - 80
         self.logon_input = xp.createWidget(
-            l, t, l + 255, b,
+            l, t, s, b,
             1, "", 0, self.widget, xp.WidgetClass_TextField
         )
         xp.setWidgetProperty(self.logon_input, xp.Property_MaxCharacters, 24)
         self.logon_caption = xp.createWidget(
-            l, t, l + 255, b,
+            l, t, s, b,
             1, "", 0, self.widget, xp.WidgetClass_Caption
         )
+        s += 10
         self.save_button = xp.createWidget(
-            l + 258, t, r, b,
+            s, t, r, b,
             1, "SAVE", 0, self.widget, xp.WidgetClass_Button
         )
         self.edit_button = xp.createWidget(
-            l + 258, t, r, b,
+            s, t, r, b,
             1, "CHANGE", 0, self.widget, xp.WidgetClass_Button
         )
         self.top = b - self.cr()
-
 
     def add_content_widget(self, title: str = "", lines: Optional[int] = None) -> None:
         self.content_widget['subwindow'] = self.add_subwindow(lines=lines)
@@ -740,7 +745,12 @@ class FloatingWidget:
         else:
             xp.setWindowIsVisible(self.window, 0)
 
-    def setup_widget(self, logon: Optional[str] = None) -> None:
+    def setup_widget(self, server: str = HOPPIE, logon: Optional[str] = None) -> None:
+        debug(f"Setting up widget: server={server}, logon={logon}", "WIDGET")
+        # server selection
+        for k, v in self.server_check.items():
+            xp.setWidgetProperty(k, xp.Property_ButtonState, v == ('hoppie' if server == HOPPIE else 'sayintention'))
+        # logon display
         if logon:
             xp.hideWidget(self.logon_input)
             xp.hideWidget(self.save_button)
@@ -784,11 +794,10 @@ class PythonInterface:
         # load settings
         self.load_settings()
 
-        # widget and windows
+        # widget and windows init
         self.monitor = None  # monitor window
         self.status_text = ''  # text displayed in widget info_line
         self.message_content = []  # content of the messages widget
-        # self.create_monitor_window(100, 400)
 
         # create main menu and widget
         self.main_menu = self.create_main_menu()
@@ -888,6 +897,14 @@ class PythonInterface:
         else:
             return self.sayintentions_logon
 
+    @property
+    def server_name(self) -> str:
+        """Get the server name for the selected server."""
+        if self.selected_server == HOPPIE:
+            return "Hoppie"
+        else:
+            return "SayIntentions"
+
     def dref_init(self) -> None:
         try:
             self.dref = Dref()
@@ -912,27 +929,18 @@ class PythonInterface:
     def main_menu_callback(self, menuRef, menuItem) -> None:
         """Main menu Callback"""
         if menuItem == 1:
-            if not self.monitor:
-                self.create_monitor_window(100, 400)
-            else:
-                self.monitor.set_window_visible()
+            self.open_monitor_window()
 
     def create_monitor_window(self, x: int = 100, y: int = 400) -> None:
-
         # main window
         self.monitor = FloatingWidget.create_window(f"HoppieBridge {__VERSION__}", x, y, width=MONITOR_WIDTH)
-
         # LOGON sub window
         self.monitor.add_user_info_widget()
-
         # info message line
         self.monitor.add_info_line()
-
         # Messages sub window
         self.monitor.add_content_widget(title='Messages:')
-
-        self.monitor.setup_widget(self.logon)
-
+        self.monitor.setup_widget(self.selected_server, self.logon)
         # Register our widget handler
         self.monitor_callback = self.monitor_widget_handler
         xp.addWidgetCallback(self.monitor.widget, self.monitor_callback)
@@ -954,18 +962,44 @@ class PythonInterface:
                 xp.setWindowIsVisible(self.monitor.window, 0)
                 return 1
 
+        if inMessage == xp.Msg_ButtonStateChanged and inParam1 in self.monitor.server_check:
+            if inParam2:
+                for i in self.monitor.server_check.keys():
+                    if i != inParam1:
+                        xp.setWidgetProperty(i, xp.Property_ButtonState, 0)
+            else:
+                xp.setWidgetProperty(inParam1, xp.Property_ButtonState, 1)
+            self.selected_server = HOPPIE if self.monitor.server_check[inParam1] == 'hoppie' else SAYINTENTIONS
+            debug(f"Selected server changed to: {self.selected_server}", "WIDGET")
+            self.monitor.setup_widget(self.selected_server, self.logon)
+            return 1
+
         if inMessage == xp.Msg_PushButtonPressed:
             if inParam1 == self.monitor.popout_button:
                 self.monitor.switch_window_position()
+
             if inParam1 == self.monitor.save_button:
+                logon = xp.getWidgetDescriptor(self.monitor.logon_input).strip()
+                debug(f"Logon entered: {logon}", "WIDGET")
+                if self.selected_server == HOPPIE:
+                    self.hoppie_logon = logon
+                else:
+                    self.sayintentions_logon = logon
                 self.save_settings()
+                self.status_text = 'settings saved'
+                self.monitor.setup_widget(self.selected_server, self.logon)
                 return 1
             if inParam1 == self.monitor.edit_button:
                 xp.setWidgetDescriptor(self.monitor.logon_input, f"{self.logon}")
-                self.logon = None
-                self.monitor.setup_widget()
+                self.monitor.setup_widget(self.selected_server)
                 return 1
         return 0
+
+    def open_monitor_window(self) -> None:
+        if not self.monitor:
+            self.create_monitor_window(100, 500)
+        else:
+            self.monitor.set_window_visible()
 
     def dict_to_lines(self, data: dict) -> list[str]:
         if not self.monitor:
@@ -991,43 +1025,42 @@ class PythonInterface:
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 data = f.read()
             # parse file
-            settings = json.loads(data)
-            debug(f"Settings loaded: {settings}", "SETTINGS")
-            # check if we have a logon
-            self.hoppie_logon = settings.get('settings').get('logon') if 'logon' in settings.keys() else settings.get('settings').get('hoppie_logon', '')
-            self.sayintentions_logon = settings.get('settings').get('sayintentions_logon', '')
-            self.selected_server = HOPPIE if settings.get('settings').get('selected_server', 'hoppie') == 'hoppie' else SAYINTENTIONS
-            if self.hoppie_logon:
-                debug(f"Hoppie Logon found: {self.hoppie_logon}")
-            if self.sayintentions_logon:
-                debug(f"SayIntentions Logon found: {self.sayintentions_logon}")
-            return True
-        else:
-            # open settings window
-            return False
+            settings = json.loads(data).get('settings', {})
+            if settings:
+                debug(f"Settings loaded: {settings} | {type(settings)}", "SETTINGS")
+                # check if we have a logon
+                debug(f"Settings keys: {settings.keys()} | logon in keys: {'logon' in settings.keys()}", "SETTINGS")
+                self.hoppie_logon = settings.get('logon') if 'logon' in settings.keys() else settings.get('hoppie_logon', '')
+                self.sayintentions_logon = settings.get('sayintentions_logon', '')
+                self.selected_server = HOPPIE if settings.get('selected_server', 'hoppie') == 'hoppie' else SAYINTENTIONS
+                debug(f"Selected server: {self.selected_server} | result: {settings.get('selected_server', 'hoppie')}", "SETTINGS")
+                if self.hoppie_logon:
+                    debug(f"Hoppie Logon found: {self.hoppie_logon}")
+                if self.sayintentions_logon:
+                    debug(f"SayIntentions Logon found: {self.sayintentions_logon}")
+                return True
+
+        # open settings window
+        self.open_monitor_window()
+        return False
 
     def save_settings(self) -> None:
         if not self.monitor:
             # sanity check
             return
-        logon = xp.getWidgetDescriptor(self.monitor.logon_input).strip()
-        debug(f"logon: {logon}", "SETTINGS")
-        if logon:
-            # save settings
-            settings = {
-                'settings': {
-                    'hoppie_logon': self.hoppie_logon or '',
-                    'sayintentions_logon': self.sayintentions_logon or '',
-                    'selected_server': 'hoppie' if self.selected_server == HOPPIE else 'sayintentions',
-                }
-            }
 
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(settings, f)
-            # check file
-            self.load_settings()
-            self.status_text = 'settings saved'
-            self.monitor.setup_widget(self.logon)
+        settings = {
+            'settings': {
+                'hoppie_logon': self.hoppie_logon or '',
+                'sayintentions_logon': self.sayintentions_logon or '',
+                'selected_server': 'hoppie' if self.selected_server == HOPPIE else 'sayintentions',
+            }
+        }
+
+        with open(self.config_file, 'w', encoding='utf-8') as f:
+            json.dump(settings, f)
+        # check file
+        self.load_settings()
 
     def check_async_task(self) -> None:
         """Check the status of the async task"""
@@ -1147,8 +1180,8 @@ class PythonInterface:
             return DEFAULT_SCHEDULE
 
         if not self.logon:
-            debug(" *** No Logon, aborting ...", "loopCallback")
-            self.status_text = "Set Hoppie Logon"
+            debug(" *** [{self.server_name}] No Logon, aborting ...", "loopCallback")
+            self.status_text = f"Set {self.server_name} Logon"
             self.comm_ready = False
             return DEFAULT_SCHEDULE
 
@@ -1216,6 +1249,8 @@ class PythonInterface:
     def XPluginStop(self) -> None:
         # Called once by X-Plane on quit (or when plugins are exiting as part of reload)
         xp.destroyFlightLoop(self.loop_id)
+        # save settings
+        self.save_settings()
         # destroy widgets
         if self.monitor:
             self.monitor.destroy()
