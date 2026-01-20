@@ -1,11 +1,12 @@
 # HoppieBridge
-python script for XPPython3 in X-Plane 12, to create drefs for Hoppie's ACARS communication.
+python script for XPPython3 in X-Plane 12, to create drefs for _Hoppie's ACARS_ communication.\
+Version 2.0 and above will permit to connect to _SayIntentions_ server as well.
 
 The idea is to create a bridge for all the developers that would like to use the ACARS service without creating the server communication interface.
 
 ## Requirements
 - MacOS 10.14, Windows 7 and Linux kernel 4.0 and above
-- X-Plane 12.3.0 and above (not tested with previous versions, may work)
+- X-Plane 12.4 and above (not tested with previous versions, may work)
 - pbuckner's [XPPython3 plugin](https://xppython3.readthedocs.io/en/latest/index.html)
 
 > [!IMPORTANT]

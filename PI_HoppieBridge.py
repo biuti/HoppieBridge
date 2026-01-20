@@ -95,7 +95,7 @@ HOPPIE = 'https://www.hoppie.nl/acars/system/connect.html'
 SAYINTENTIONS = 'https://acars.sayintentions.ai/acars/system/connect.html'
 
 # debug 
-DEBUG = True
+DEBUG = False
 
 def log(msg: str) -> None:
     xp.log(msg)
@@ -635,7 +635,7 @@ class FloatingWidget:
 
         self.server_check = {
             hoppie_check: 'hoppie',
-            sayint_check: 'sayintention'
+            sayint_check: 'sayintentions'
         }
 
         for k, v in self.server_check.items():
@@ -749,7 +749,7 @@ class FloatingWidget:
         debug(f"Setting up widget: server={server}, logon={logon}", "WIDGET")
         # server selection
         for k, v in self.server_check.items():
-            xp.setWidgetProperty(k, xp.Property_ButtonState, v == ('hoppie' if server == HOPPIE else 'sayintention'))
+            xp.setWidgetProperty(k, xp.Property_ButtonState, v == ('hoppie' if server == HOPPIE else 'sayintentions'))
         # logon display
         if logon:
             xp.hideWidget(self.logon_input)
