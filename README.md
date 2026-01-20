@@ -16,9 +16,10 @@ The idea is to create a bridge for all the developers that would like to use the
 This script creates drefs needed to communicate with Hoppie's ACARS system:
 - hoppiebridge/send_queue: string, to send messages to Hoppie's ACARS (legacy)
 - hoppiebridge/send_message_to — string, destination callsign for structured message.
-- hoppiebridge/send_message_type — mstring, message type for structured message.
+- hoppiebridge/send_message_type — string, message type for structured message.
 hoppiebridge/send_message_packet — string, message packet for structured message.
 - hoppiebridge/callsign: string, callsign value
+- hoppiebridge/poll_frequency_fast - number, set 1 (or any non-zero value) to enable fast polling (around 15 seconds), 0 for normal polling (45 ~ 75 seconds)
 - hoppiebridge/send_callsign — string, set / change callsign.
 - hoppiebridge/poll_queue: string, to poll messages from Hoppie's ACARS (legacy)
 - hoppiebridge/poll_message_origin — string, origin of the latest message received ("poll" or "response").
