@@ -791,19 +791,19 @@ class PythonInterface:
         self.async_task = False
         self.pending_inbox = deque()  # pending inbox messages
 
-        # load settings
-        self.load_settings()
+        # status
+        self.next_poll_time = 0
 
         # widget and windows init
         self.monitor = None  # monitor window
         self.status_text = ''  # text displayed in widget info_line
         self.message_content = []  # content of the messages widget
 
+        # load settings
+        self.load_settings()
+
         # create main menu and widget
         self.main_menu = self.create_main_menu()
-
-        # status
-        self.next_poll_time = 0
 
     callsign = property(
         safe_attrgetter("dref.callsign", default=''),
