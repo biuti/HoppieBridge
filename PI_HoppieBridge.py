@@ -76,7 +76,7 @@ except ImportError:
     pass
 
 # Version
-__VERSION__ = 'v2.1'
+__VERSION__ = 'v2.2-beta.4'
 
 # Plugin parameters required from XPPython3
 plugin_name = 'HoppieBridge'
@@ -95,7 +95,7 @@ HOPPIE = 'https://www.hoppie.nl/acars/system/connect.html'
 SAYINTENTIONS = 'https://acars.sayintentions.ai/acars/system/connect.html'
 
 # debug 
-DEBUG = False
+DEBUG = True
 
 def log(msg: str) -> None:
     xp.log(msg)
@@ -227,7 +227,7 @@ def parse_hoppie_message(data: dict) -> ParsedMessage:
         return origin, None, None, "ok"
 
     # Case 2: ok {SOURCE TYPE {PACKET}}
-    match = HOPPIE_PATTERN.search(raw)
+    match = HOPPIE_PATTERN.fullmatch(raw)
     if match:
         source = match.group(1)
         msg_type = match.group(2)
@@ -236,6 +236,17 @@ def parse_hoppie_message(data: dict) -> ParsedMessage:
 
     # Case 3: unexpected but non-fatal content
     return origin, None, None, raw
+
+
+def split_hoppie_poll(raw: str) -> list[str]:
+    """
+    Split a Hoppie poll payload into individual `{SRC TYPE {PACKET}}` blocks.
+    Returns raw packet strings INCLUDING the wrapping braces.
+    """
+    if not raw:
+        return []
+
+    return [m.group(0) for m in HOPPIE_PATTERN.finditer(raw)]
 
 
 class Dref:
@@ -1001,6 +1012,15 @@ class PythonInterface:
         else:
             self.monitor.set_window_visible()
 
+    def publish_to_inbox(self, message: dict) -> None:
+        """send a message to the inbox drefs and on the monitor widget"""
+        if not isinstance(message, dict):
+            debug('request publish_to_inbox of non dict content', 'ACARS')
+            return
+        debug("Message added to inbox", "ACARS")
+        self.inbox = message
+        self.message_content = self.dict_to_lines(message)
+
     def dict_to_lines(self, data: dict) -> list[str]:
         if not self.monitor:
             return []
@@ -1097,28 +1117,41 @@ class PythonInterface:
             self.status_text = f"ACARS Error"
             return
 
-        if not ('poll' in result or 'response' in result):
+        if not any(k in result for k in ('poll', 'response')):
             debug(" **** ACARS Invalid response", "ASYNC")
             self.status_text = "ACARS Invalid response"
             return
 
         # process received message
-        debug(f"Received message: {result}", "ASYNC")
-        debug(f"comm_ready: {self.comm_ready}", "ASYNC")
-        if not self.comm_ready and result.get('poll', '').strip().lower() == 'ok':
+        debug(f"Received message: {result}", "ACARS")
+        key = 'poll' if 'poll' in result else 'response'
+        raw = result.get(key, '').strip()
+        if not raw:
+            debug(" **** ACARS Empty poll response", "ACARS")
+            return
+
+        debug(f"comm_ready: {self.comm_ready}", "ACARS")
+        if not self.comm_ready and raw.lower() == 'ok':
             # first successful poll {'poll': 'ok '}
             self.comm_ready = True
-            debug("Communication ready", "ASYNC")
+            debug("Communication ready", "ACARS")
             self.status_text = "ACARS ready"
-        elif not self.inbox:
-            self.inbox = result
-            debug("Message added to inbox", "ASYNC")
-            self.status_text = "New Message received ..."
-            self.message_content = self.dict_to_lines(result)
+
         else:
-            # inbox is not empy, we need to wait for client to clean it
-            self.pending_inbox.append(result)
-            self.status_text = "Message received but inbox not empty"
+            # check if we have chained packets before sending to inbox
+            # No structured blocks found → treat as a single message
+            blocks = split_hoppie_poll(raw) or [raw]
+            self.status_text = "New Message received ..." if len(blocks) == 1 else f"{len(blocks)} Chained Messages received ..."
+
+            for block in blocks:
+                # create the dict from parts
+                m = {key: block}
+                if not self.inbox:
+                    self.publish_to_inbox(m)
+                else:
+                    self.pending_inbox.append(m)
+                    debug("Message added to pending_inbox", "ACARS")
+                    self.status_text = "a New Message has been queued ..."
 
     def check_poll_or_send(self) -> None:
         """Check if we need to poll or send messages"""
@@ -1214,7 +1247,8 @@ class PythonInterface:
 
         # check if we have pending messages
         if self.pending_inbox and not self.inbox:
-            self.inbox = self.pending_inbox.popleft()
+            debug("  ** moving pending_inbox to inbox ...", "loopCallback")
+            self.publish_to_inbox(self.pending_inbox.popleft())
 
         # check if we have an async task running
         if self.async_task:
