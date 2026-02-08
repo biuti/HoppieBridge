@@ -95,7 +95,7 @@ HOPPIE = 'https://www.hoppie.nl/acars/system/connect.html'
 SAYINTENTIONS = 'https://acars.sayintentions.ai/acars/system/connect.html'
 
 # debug 
-DEBUG = True
+DEBUG = False
 
 def log(msg: str) -> None:
     xp.log(msg)
@@ -1114,7 +1114,7 @@ class PythonInterface:
         # process result
         if 'error' in result:
             log(f" **** ACARS Error: {result['error']}")
-            self.status_text = f"ACARS Error"
+            self.status_text = "ACARS Error"
             return
 
         if not any(k in result for k in ('poll', 'response')):
@@ -1138,6 +1138,8 @@ class PythonInterface:
             self.status_text = "ACARS ready"
 
         else:
+            if not raw.lower().strip() == 'ok':  # to avoid logging the 'ok' response from successful empty polls
+                log(f" **** ACARS {key} Message received: {raw}")
             # check if we have chained packets before sending to inbox
             # No structured blocks found → treat as a single message
             blocks = split_hoppie_poll(raw) or [raw]
@@ -1165,8 +1167,9 @@ class PythonInterface:
                 message = self.outbox
                 if isinstance(message, dict):
                     # self.outbox: '{"to": "value", "type": "value", "packet": "value"}'
-                    message['logon'] = self.logon
                     message['from'] = self.callsign
+                    log(f"**** ACARS Message sent (logon omitted): {message}")
+                    message['logon'] = self.logon
                     self.outbox = None
             except Exception as e:
                 log(f" *** Invalid message format, Error: {e}")
